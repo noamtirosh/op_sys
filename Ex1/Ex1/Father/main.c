@@ -35,28 +35,28 @@ void create_son_process(void);
 
 int main()
 {
+	char* comannd = NULL;
 	DWORD file_len = get_file_len("plaintext.txt");
 	if (file_len % 16)
 	{
 		printf("problem");
 		//TODO add comment
 	}
-	char* p_arr = NULL;
+	
 	int num_of_dig = file_len % 10;
 	int size = strlen("plaintext.txt") + num_of_dig + 2;// + /0
-	p_arr = (char*)malloc(size * sizeof(char)); //TODO add check and memory relase
-	if (NULL == p_arr)
+	comannd = (char*)malloc(size * sizeof(char)); //TODO add check and memory relase
+	if (NULL == comannd)
 	{
 		return ERROR_CODE;
 	}
-	sprintf_s(p_arr, size, "%s %s %d %s","a","b",1,"c");
-	printf("%s",p_arr);
-	for (int i = 0; i < file_len ;i+=16)
+	for (int offset = 0; offset < file_len ; offset +=16)
 	{
+		sprintf_s(comannd, size, "%s %s %d %s", "a", "b", offset, "c");
 		create_son_process();
+		//	printf("%s", comannd);
 	}
-	free(p_arr);
-	
+	free(comannd);	
 }
 
 /**
