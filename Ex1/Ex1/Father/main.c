@@ -6,7 +6,10 @@
 
 #define TIMEOUT_IN_MILLISECONDS 5000
 #define BRUTAL_TERMINATION_CODE 0x55
+#define KEY_FILE_IND 2
+#define MASSAGE_FILE_IND 1
 static const int ERROR_CODE = -1;
+#define BEGINCOMANND  "Son.exe"
 
 
 /*oOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoO*/
@@ -33,8 +36,10 @@ void create_son_process(void);
 
 /*oOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoO*/
 
-int main()
+int main(int argc, char* argv[])
 {
+	const char* massage_file_path = argv[MASSAGE_FILE_IND];
+	const char* key_file_path = argv[KEY_FILE_IND];
 	char* comannd = NULL;
 	DWORD file_len = get_file_len("plaintext.txt");
 	if (file_len % 16)
@@ -44,7 +49,7 @@ int main()
 	}
 	
 	int num_of_dig = file_len % 10;
-	int size = strlen("plaintext.txt") + num_of_dig + 2;// + /0
+	int size = strlen(massage_file_path) + strlen(key_file_path) + strlen(BEGINCOMANND) + num_of_dig + 4;// 3 ' ' + /0
 	comannd = (char*)malloc(size * sizeof(char)); //TODO add check and memory relase
 	if (NULL == comannd)
 	{
@@ -52,8 +57,8 @@ int main()
 	}
 	for (int offset = 0; offset < file_len ; offset +=16)
 	{
-		sprintf_s(comannd, size, "%s %s %d %s", "a", "b", offset, "c");
-		create_son_process();
+		sprintf_s(comannd, size, "%s %s %d %s", BEGINCOMANND, massage_file_path, offset, key_file_path);
+		create_son_process(comannd);
 		//	printf("%s", comannd);
 	}
 	free(comannd);	
@@ -62,13 +67,13 @@ int main()
 /**
 * Demonstrates win32 process creation and termination.
 */
-void create_son_process(void)
+void create_son_process(LPTSTR command)
 {
 	PROCESS_INFORMATION procinfo;
 	DWORD				waitcode;
 	DWORD				exitcode;
 	BOOL				retVal;
-	TCHAR				command[] = ("Son.exe plaintext.txt 0 key.txt"); /* TCHAR is a win32
+	 /* TCHAR is a win32
 													generic char which may be either a simple (ANSI) char or a unicode char,
 													depending on behind-the-scenes operating system definitions. Type LPTSTR
 													is a string of TCHARs. Type LPCTSTR is a const string of TCHARs. */
