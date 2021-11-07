@@ -21,7 +21,7 @@ int main(int argc, char* argv[])
 	/// <returns></returns>
 	if (argc != NUM_OF_INPUTS + 1)
 	{
-		printf("ERROR: Not enough input arguments");
+		printf("ERROR: Not enough input arguments\n");
 		return ERR_CODE;
 	}
 	//get relevent params 
@@ -34,18 +34,18 @@ int main(int argc, char* argv[])
 	
 	if (FILE_BUFFER != read_from_file(message_file_path, offset, read_buffer, FILE_BUFFER))
 	{
-		printf("was not able to read message from file: %s", message_file_path);
+		printf("was not able to read message from file: %s\n", message_file_path);
 		return ERR_CODE;
 	}
 	if (FILE_BUFFER != read_from_file(key_file_path,0, key_buffer, FILE_BUFFER))
 	{
-		printf("was not able to read key from file: %s", key_file_path);
+		printf("was not able to read key from file: %s\n", key_file_path);
 		return ERR_CODE;
 	}
 	encode_massage(read_buffer, key_buffer, FILE_BUFFER);
 	if (FILE_BUFFER != write_to_file(OUT_FILE_NAME, read_buffer, FILE_BUFFER))
 	{
-		printf("was not able to write encrypte message from file: %s", OUT_FILE_NAME);
+		printf("was not able to write encrypte message from file: %s\n", OUT_FILE_NAME);
 	}
 	return(SUCCESS_CODE);
 
@@ -84,8 +84,7 @@ long read_from_file(LPCSTR file_name ,long offset, LPVOID p_buffer, const DWORD 
 		&n_written, NULL))
 	{
 		last_error = GetLastError();
-		printf("problem");
-		//TODO handle problem in read file
+		printf("Unable to read from file, error: %ld\n", last_error);
 	}
 	CloseHandle(h_file);
 	return n_written;
@@ -119,12 +118,11 @@ long write_to_file(LPCSTR file_name, LPVOID p_buffer,const DWORD buffer_len)
 		&n_written, NULL))
 	{
 		last_error = GetLastError();
-		printf("problem");
-		//TODO handle problem in read file
+		printf("Unable to write to file, error: %ld\n",last_error);
 	}
 	if (n_written == buffer_len)
 	{
-		printf("write all buffer");
+		printf("write all buffer\n");
 	}
 	CloseHandle(h_file);
 	return n_written;
@@ -168,13 +166,13 @@ HANDLE CreateFileSimple(LPCSTR file_name,char mode)
 		NULL);
 	if (h_file == INVALID_HANDLE_VALUE)
 	{
-		printf("Unable to open file %s",file_name);
+		printf("Unable to open file %s\n",file_name);
 		//TODO hendle problems when open file
 	}
 	last_error = GetLastError();
 	if (last_error == ERROR_FILE_NOT_FOUND)
 	{
-		printf("did not find file %s", file_name);
+		printf("did not find file %s\n", file_name);
 	}
 	return h_file;
 }
