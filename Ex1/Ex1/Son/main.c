@@ -4,11 +4,11 @@
 #include <stdlib.h>
 
 //son
-//function declaration TODO add functions
-void encode_massage(char* massage, const char* key, int massge_len);
-HANDLE CreateFileSimple(LPCSTR file_name, char mode);
-long read_from_file(LPCSTR file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
-long write_to_file(LPCSTR file_name, LPVOID p_buffer, const DWORD buffer_len);
+//function declaration
+void encode_massage(char* p_massage, const char* p_key, int massge_len);
+HANDLE create_file_simple(LPCSTR p_file_name, char mode);
+long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
+long write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
 
 int main(int argc, char* argv[])
 {
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
 
 }
 
-long read_from_file(LPCSTR file_name ,long offset, LPVOID p_buffer, const DWORD buffer_len)
+long read_from_file(LPCSTR p_file_name ,long offset, LPVOID p_buffer, const DWORD buffer_len)
 {
 	/// <summary>
 	///  read message in given length from givven offset in bytes from beginning
@@ -62,7 +62,7 @@ long read_from_file(LPCSTR file_name ,long offset, LPVOID p_buffer, const DWORD 
 	/// <param name="p_buffer"> pointer to buffer to put message</param>
 	/// <param name="buffer_len">length of message to read</param>
 	/// <returns>num of bytes readed from file</returns>
-	HANDLE h_file = CreateFileSimple(file_name, 'r');
+	HANDLE h_file = CreateFileSimple(p_file_name, 'r');
 	DWORD n_written = 0;
 	DWORD last_error ;
 	if (INVALID_HANDLE_VALUE == h_file)
@@ -90,7 +90,7 @@ long read_from_file(LPCSTR file_name ,long offset, LPVOID p_buffer, const DWORD 
 	return n_written;
 
 }
-long write_to_file(LPCSTR file_name, LPVOID p_buffer,const DWORD buffer_len)
+long write_to_file(LPCSTR p_file_name, LPVOID p_buffer,const DWORD buffer_len)
 {
 	/// <summary>
 	///  write message from p_buffer in len buffer_len to file 
@@ -99,7 +99,7 @@ long write_to_file(LPCSTR file_name, LPVOID p_buffer,const DWORD buffer_len)
 	/// <param name="p_buffer">pointer to buffer</param>
 	/// <param name="buffer_len"> the length of the buffer</param>
 	/// <returns> num of bytes written to file</returns>
-	HANDLE h_file = CreateFileSimple(file_name, 'w');
+	HANDLE h_file = CreateFileSimple(p_file_name, 'w');
 	DWORD last_error;
 	DWORD n_written = 0;
 	if (INVALID_HANDLE_VALUE == h_file)
@@ -127,7 +127,7 @@ long write_to_file(LPCSTR file_name, LPVOID p_buffer,const DWORD buffer_len)
 	CloseHandle(h_file);
 	return n_written;
 }
-HANDLE CreateFileSimple(LPCSTR file_name,char mode)
+HANDLE create_file_simple(LPCSTR p_file_name,char mode)
 {
 	/// <summary>
 	/// use CreateFile with default params for read or write and return the handle
@@ -157,7 +157,7 @@ HANDLE CreateFileSimple(LPCSTR file_name,char mode)
 		share = FILE_SHARE_READ; // share for reading
 		creation_disposition = OPEN_EXISTING;// existing file only
 	};
-	h_file = CreateFile(file_name,  // file to open
+	h_file = CreateFile(p_file_name,  // file to open
 		acsees,
 		share,
 		NULL,                  // default security
@@ -166,20 +166,19 @@ HANDLE CreateFileSimple(LPCSTR file_name,char mode)
 		NULL);
 	if (h_file == INVALID_HANDLE_VALUE)
 	{
-		printf("Unable to open file %s\n",file_name);
-		//TODO hendle problems when open file
+		printf("Unable to open file %s\n", p_file_name);
 	}
 	last_error = GetLastError();
 	if (last_error == ERROR_FILE_NOT_FOUND)
 	{
-		printf("did not find file %s\n", file_name);
+		printf("did not find file %s\n", p_file_name);
 	}
 	return h_file;
 }
-void encode_massage(char *massage, const char *key,int massge_len)
+void encode_massage(char *p_massage, const char *p_key,int massge_len)
 {
 	for (int i = 0; i < massge_len; i++)
 	{
-		massage[i] = massage[i] ^ key[i];
+		p_massage[i] = p_massage[i] ^ p_key[i];
 	}
 }

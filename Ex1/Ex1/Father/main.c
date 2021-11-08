@@ -1,74 +1,79 @@
-
+#include "HardCodeData.h"
 #include <stdio.h>
 #include <windows.h>
 #include <string.h>
 
 
-#define TIMEOUT_IN_MILLISECONDS 5000
-#define BRUTAL_TERMINATION_CODE 0x55
-#define KEY_FILE_IND 2
-#define MASSAGE_FILE_IND 1
-static const int ERROR_CODE = -1;
-#define BEGINCOMANND  "Son.exe"
 
+//father
 
-/*oOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoO*/
-
-/**
-* CreateProcessSimple uses the win32 API to create a process that runs the
-* command in 'CommandLine'. it uses the win32 API function CreateProcess()
-* using default values for most parameters.
-*
-* Accepts:
-* --------
-* CommandLine - a windows generic string containing the command that the new
-*               process performs. ( See CreateProcess( documentation for more ).
-* ProcessInfoPtr - an output parameter, used to return a PROCESS_INFORMATION
-*					structure containing data about the process that was created.
-*					( See CreateProcess() documentation for more ).
-*
-* Returns:
-* --------
-* the output of CreateProcess().
-*/
-BOOL CreateProcessSimple(LPTSTR CommandLine, PROCESS_INFORMATION* ProcessInfoPtr);
-void create_son_process(void);
-
-/*oOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoO*/
+//function declaration
+BOOL CreateProcessSimple(LPTSTR p_commandLine, PROCESS_INFORMATION* p_processInfoPtr);
+DWORD create_son_process(LPTSTR p_command);
+HANDLE create_file_simple(LPCSTR p_file_name, char mode);
+DWORD get_file_len(LPCSTR p_file_name);
 
 int main(int argc, char* argv[])
 {
-	const char* massage_file_path = argv[MASSAGE_FILE_IND];
-	const char* key_file_path = argv[KEY_FILE_IND];
+	/// <summary>
+	/// open file with message, opens a procces for every 16 bytes of message that contains the message the key 
+	///and the corrent place to read the bytes stop the work when the it reach the length of the text 
+	/// </summary>
+	/// <param name="argc">num of arguments (should be 2 )</param>
+	/// <param name="argv">name of file contain message to encrypt,name file contain the key</param>
+	/// <returns></returns>
+	if (argc != NUM_OF_INPUTS + 1)
+	{
+		printf("ERROR: Not enough input arguments\n");
+		return ERR_CODE;
+	}
+	const char* p_massage_file_path = argv[MASSAGE_FILE_IND];
+	const char* p_key_file_path = argv[KEY_FILE_IND];
 	char* comannd = NULL;
 	DWORD file_len = get_file_len("plaintext.txt");
+	if (0 == file_len)
+	{
+		printf("the message file is empty\n");
+		return SUCCESS_CODE;
+	}
 	if (file_len % 16)
 	{
-		printf("problem");
-		//TODO add comment
+		printf("The line does not divisible in 16 \n");
+		return ERR_CODE;
 	}
-	
 	int num_of_dig = file_len % 10;
-	int size = strlen(massage_file_path) + strlen(key_file_path) + strlen(BEGINCOMANND) + num_of_dig + 4;// 3 ' ' + /0
-	comannd = (char*)malloc(size * sizeof(char)); //TODO add check and memory relase
+	int size = strlen(p_massage_file_path) + strlen(p_key_file_path) + strlen(BEGINCOMANND) + num_of_dig + 4;// 3 ' ' + /0
+	comannd = (char*)malloc(size * sizeof(char)); 
 	if (NULL == comannd)
 	{
-		return ERROR_CODE;
+		printf("wasnt able to allocate memory\n");
+		return ERR_CODE;
 	}
 	for (int offset = 0; offset < file_len ; offset +=16)
 	{
-		sprintf_s(comannd, size, "%s %s %d %s", BEGINCOMANND, massage_file_path, offset, key_file_path);
-		create_son_process(comannd);
-		//	printf("%s", comannd);
+		DWORD	exitcode;
+		sprintf_s(comannd, size, "%s %s %d %s", BEGINCOMANND, p_massage_file_path, offset, p_key_file_path);
+		exitcode = create_son_process(comannd);
+		if (SUCCESS_CODE != exitcode)
+		{
+			printf("son process was failed\n");
+			free(comannd);
+			return ERR_CODE;
+		}
 	}
 	free(comannd);	
+	return SUCCESS_CODE;
 }
 
 /**
 * Demonstrates win32 process creation and termination.
 */
-void create_son_process(LPTSTR command)
+DWORD create_son_process(LPTSTR p_command)
 {
+	/// <summary>
+	/// Gets command line whitch contains argumants for the son,create the process
+	/// </summary>
+	/// <param name="command">A pointer which hold the command line for son procces</param>
 	PROCESS_INFORMATION procinfo;
 	DWORD				waitcode;
 	DWORD				exitcode;
@@ -79,7 +84,7 @@ void create_son_process(LPTSTR command)
 													is a string of TCHARs. Type LPCTSTR is a const string of TCHARs. */
 
 													/*  Start the child process. */
-	retVal = CreateProcessSimple(command, &procinfo);
+	retVal = CreateProcessSimple(p_command, &procinfo);
 
 
 	if (retVal == 0)
@@ -89,42 +94,26 @@ void create_son_process(LPTSTR command)
 	}
 	waitcode = WaitForSingleObject(
 		procinfo.hProcess,
-		TIMEOUT_IN_MILLISECONDS); /* Waiting 5 secs for the process to end */
+		INFINITE); /* Waiting for prosses to end*/
 
 	printf("WaitForSingleObject output: ");
 	switch (waitcode)
 	{
-	case WAIT_TIMEOUT:
-		printf("WAIT_TIMEOUT\n"); break;
 	case WAIT_OBJECT_0:
 		printf("WAIT_OBJECT_0\n"); break;
 	default:
 		printf("0x%x\n", waitcode);
 	}
 
-	if (waitcode == WAIT_TIMEOUT) /* Process is still alive */
-	{
-		printf("Process was not terminated before timeout!\n"
-			"Terminating brutally!\n");
-		TerminateProcess(
-			procinfo.hProcess,
-			BRUTAL_TERMINATION_CODE); /* Terminating process with an exit code of 55h */
-		Sleep(10); /* Waiting a few milliseconds for the process to terminate,
-					note the above command may also fail, so another WaitForSingleObject is required.
-					We skip this for brevity */
-	}
-
 	GetExitCodeProcess(procinfo.hProcess, &exitcode);
-
-	printf("The exit code for the process is 0x%x\n", exitcode);
-
 	/* Note: process is still being tracked by OS until we release handles */
 	CloseHandle(procinfo.hProcess); /* Closing the handle to the process */
 	CloseHandle(procinfo.hThread); /* Closing the handle to the main thread of the process */
+	return exitcode;
 }
 
 
-BOOL CreateProcessSimple(LPTSTR CommandLine, PROCESS_INFORMATION* ProcessInfoPtr)
+BOOL CreateProcessSimple(LPTSTR p_commandLine, PROCESS_INFORMATION* p_processInfoPtr)
 {
 	STARTUPINFO	startinfo = { sizeof(STARTUPINFO), NULL, 0 }; /* <ISP> here we */
 															  /* initialize a "Neutral" STARTUPINFO variable. Supplying this to */
@@ -134,7 +123,7 @@ BOOL CreateProcessSimple(LPTSTR CommandLine, PROCESS_INFORMATION* ProcessInfoPtr
 
 	return CreateProcess(
 		NULL, /*  No module name (use command line). */
-		CommandLine,			/*  Command line. */
+		p_commandLine,			/*  Command line. */
 		NULL,					/*  Process handle not inheritable. */
 		NULL,					/*  Thread handle not inheritable. */
 		FALSE,					/*  Set handle inheritance to FALSE. */
@@ -142,12 +131,18 @@ BOOL CreateProcessSimple(LPTSTR CommandLine, PROCESS_INFORMATION* ProcessInfoPtr
 		NULL,					/*  Use parent's environment block. */
 		NULL,					/*  Use parent's starting directory. */
 		&startinfo,				/*  Pointer to STARTUPINFO structure. */
-		ProcessInfoPtr			/*  Pointer to PROCESS_INFORMATION structure. */
+		p_processInfoPtr			/*  Pointer to PROCESS_INFORMATION structure. */
 	);
 }
 
-HANDLE CreateFileSimple(LPCSTR file_name, char mode)
+HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 {
+	/// <summary>
+	/// use CreateFile with default params for read or write and return the handle
+	/// </summary>
+	/// <param name="file_name">file path</param>
+	/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
+	/// <returns>handle to file</returns>
 	HANDLE h_file;
 	DWORD last_error;
 	DWORD acsees;
@@ -158,47 +153,40 @@ HANDLE CreateFileSimple(LPCSTR file_name, char mode)
 	case 'r': case 'R':
 		acsees = GENERIC_READ;  // open for reading
 		share = FILE_SHARE_READ; // share for reading
-		creation_disposition = OPEN_EXISTING;
+		creation_disposition = OPEN_EXISTING; // existing file only
 		break;
 	case 'w':case'W':
 		acsees = GENERIC_WRITE;
 		share = FILE_SHARE_WRITE;
 		creation_disposition = OPEN_ALWAYS; // open if existe or create new if not
 		break;
-	case 'a':
-		acsees = GENERIC_READ | GENERIC_WRITE;
-		share = FILE_SHARE_WRITE | FILE_SHARE_READ;
-		creation_disposition = OPEN_ALWAYS; // open if existe or create new if not
-		break;
 	default:
 		acsees = GENERIC_READ;  // open for reading
 		share = FILE_SHARE_READ; // share for reading
-		creation_disposition = OPEN_EXISTING;
+		creation_disposition = OPEN_EXISTING;// existing file only
 	};
-	h_file = CreateFile(file_name,  // file to open
+	h_file = CreateFile(p_file_name,  // file to open
 		acsees,
 		share,
 		NULL,                  // default security
-		creation_disposition,  // existing file only
+		creation_disposition,
 		FILE_ATTRIBUTE_NORMAL, // normal file
 		NULL);
 	if (h_file == INVALID_HANDLE_VALUE)
 	{
-		printf("problem");
-		//TODO hendle problems when open file
+		printf("Unable to open file %s\n", p_file_name);
 	}
 	last_error = GetLastError();
 	if (last_error == ERROR_FILE_NOT_FOUND)
 	{
-		printf("problem");
-
+		printf("did not find file %s\n", p_file_name);
 	}
 	return h_file;
 }
 
-DWORD get_file_len(LPCSTR file_name)
+DWORD get_file_len(LPCSTR p_file_name)
 {
-	HANDLE h_file = CreateFileSimple(file_name, 'r');
+	HANDLE h_file = create_file_simple(p_file_name, 'r');
 	DWORD current_file_position;
 	//move file pointer in ofset
 	current_file_position = SetFilePointer(
