@@ -50,9 +50,9 @@ int main(int argc, char* argv[])
 		printf("the message in file: %s does not divisible in %d\n", p_massage_file_path, KEY_LEN);
 		return ERR_CODE;
 	}
-	if (KEY_LEN != get_file_len(p_massage_file_path))
+	if (KEY_LEN != get_file_len(p_key_file_path))
 	{
-		printf("the key in file: %s does not have %d chars\n", p_massage_file_path, KEY_LEN);
+		printf("the key in file: %s does not have %d chars\n", p_key_file_path, KEY_LEN);
 		return ERR_CODE;
 	}
 	int num_of_dig = file_len % 10;
