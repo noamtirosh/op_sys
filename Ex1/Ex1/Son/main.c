@@ -1,24 +1,33 @@
+//////////////////////////////////////
+/*
+* Authors – Noam Tirosh 314962945, Daniel Kogan 315786418
+* project : Son
+* Description : get message file path ,key file path and offset, read 16 bytes from the offset in the message file,
+*	bitwise XOR those 16 bytes with the 16 bytes key and write the encrypt massge 
+*	to the end of diffulet file [Encrypte_message.txt]
+*/
+/////////////////////////////////////
+
 #include "HardCodedData.h"
 #include <stdio.h>
 #include <Windows.h>
 #include <stdlib.h>
 
-//son
 //function declaration
 void encode_massage(char* p_massage, const char* p_key, int massge_len);
 HANDLE create_file_simple(LPCSTR p_file_name, char mode);
 long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
 long write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
 
+/// <summary>
+/// open file with message read 16 bytes after given offset, open key from file,encrypt massge with key
+///  and write to the end of diffulet file [Encrypte_message.txt]
+/// </summary>
+/// <param name="argc">num of arguments (should be 3 )</param>
+/// <param name="argv">name of file contain message to encrypt ,offset in bytes,name file contain the key</param>
+/// <returns>SUCCESS_CODE if write encrypt massge ERR_CODE else </returns>
 int main(int argc, char* argv[])
 {
-	/// <summary>
-	/// open file with message read 16 bytes after given offset, open key from file,encrypt massge with key
-	///  and write to the end of diffulet file [Encrypte_message.txt]
-	/// </summary>
-	/// <param name="argc">num of arguments (should be 3 )</param>
-	/// <param name="argv">name of file contain message to encrypt ,offset in bytes,name file contain the key</param>
-	/// <returns></returns>
 	if (argc != NUM_OF_INPUTS + 1)
 	{
 		printf("ERROR: Not enough input arguments\n");
@@ -46,23 +55,24 @@ int main(int argc, char* argv[])
 	if (FILE_BUFFER != write_to_file(OUT_FILE_NAME, read_buffer, FILE_BUFFER))
 	{
 		printf("was not able to write encrypte message from file: %s\n", OUT_FILE_NAME);
+		return ERR_CODE;
 	}
 	return(SUCCESS_CODE);
 
 }
 
+/// <summary>
+///  read message in given length from givven offset in bytes from beginning
+// from given file to buffer 
+/// </summary>
+/// <param name="file_name">path to file to read</param>
+/// <param name="offset"> offset in bytes from beginning </param>
+/// <param name="p_buffer"> pointer to buffer to put message</param>
+/// <param name="buffer_len">length of message to read</param>
+/// <returns>num of bytes readed from file</returns>
 long read_from_file(LPCSTR p_file_name ,long offset, LPVOID p_buffer, const DWORD buffer_len)
 {
-	/// <summary>
-	///  read message in given length from givven offset in bytes from beginning
-	// from given file to buffer 
-	/// </summary>
-	/// <param name="file_name">path to file to read</param>
-	/// <param name="offset"> offset in bytes from beginning </param>
-	/// <param name="p_buffer"> pointer to buffer to put message</param>
-	/// <param name="buffer_len">length of message to read</param>
-	/// <returns>num of bytes readed from file</returns>
-	HANDLE h_file = CreateFileSimple(p_file_name, 'r');
+	HANDLE h_file = create_file_simple(p_file_name, 'r');
 	DWORD n_written = 0;
 	DWORD last_error ;
 	if (INVALID_HANDLE_VALUE == h_file)
@@ -90,16 +100,17 @@ long read_from_file(LPCSTR p_file_name ,long offset, LPVOID p_buffer, const DWOR
 	return n_written;
 
 }
+
+/// <summary>
+///  write message from p_buffer in len buffer_len to file 
+/// </summary>
+/// <param name="file_name">path to file to write the buffer</param>
+/// <param name="p_buffer">pointer to buffer</param>
+/// <param name="buffer_len"> the length of the buffer</param>
+/// <returns> num of bytes written to file</returns>
 long write_to_file(LPCSTR p_file_name, LPVOID p_buffer,const DWORD buffer_len)
 {
-	/// <summary>
-	///  write message from p_buffer in len buffer_len to file 
-	/// </summary>
-	/// <param name="file_name">path to file to write the buffer</param>
-	/// <param name="p_buffer">pointer to buffer</param>
-	/// <param name="buffer_len"> the length of the buffer</param>
-	/// <returns> num of bytes written to file</returns>
-	HANDLE h_file = CreateFileSimple(p_file_name, 'w');
+	HANDLE h_file = create_file_simple(p_file_name, 'w');
 	DWORD last_error;
 	DWORD n_written = 0;
 	if (INVALID_HANDLE_VALUE == h_file)
@@ -127,14 +138,15 @@ long write_to_file(LPCSTR p_file_name, LPVOID p_buffer,const DWORD buffer_len)
 	CloseHandle(h_file);
 	return n_written;
 }
+
+/// <summary>
+/// use CreateFile with default params for read or write and return the handle
+/// </summary>
+/// <param name="file_name">file path</param>
+/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
+/// <returns>handle to file</returns>
 HANDLE create_file_simple(LPCSTR p_file_name,char mode)
 {
-	/// <summary>
-	/// use CreateFile with default params for read or write and return the handle
-	/// </summary>
-	/// <param name="file_name">file path</param>
-	/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
-	/// <returns>handle to file</returns>
 	HANDLE h_file;
 	DWORD last_error;
 	DWORD acsees;
@@ -175,6 +187,8 @@ HANDLE create_file_simple(LPCSTR p_file_name,char mode)
 	}
 	return h_file;
 }
+
+// change p_massage value to p_massage value bitwise xor with p_key value
 void encode_massage(char *p_massage, const char *p_key,int massge_len)
 {
 	for (int i = 0; i < massge_len; i++)

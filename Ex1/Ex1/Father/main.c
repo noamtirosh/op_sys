@@ -1,3 +1,12 @@
+//////////////////////////////////////
+/*
+* Authors – Noam Tirosh 314962945, Daniel Kogan 315786418
+* project : Father
+* Description: get message file path and key file path, for ech 16 bytes in the message file, call process Son with 
+*	increasing offset.
+*/
+/////////////////////////////////////
+
 #include "HardCodeData.h"
 #include <stdio.h>
 #include <windows.h>
@@ -5,7 +14,6 @@
 
 
 
-//father
 
 //function declaration
 BOOL CreateProcessSimple(LPTSTR p_commandLine, PROCESS_INFORMATION* p_processInfoPtr);
@@ -13,15 +21,16 @@ DWORD create_son_process(LPTSTR p_command);
 HANDLE create_file_simple(LPCSTR p_file_name, char mode);
 DWORD get_file_len(LPCSTR p_file_name);
 
+
+/// <summary>
+/// open file with message, opens a procces for every 16 bytes of message that contains the message the key 
+///and the corrent place to read the bytes stop the work when the it reach the length of the text 
+/// </summary>
+/// <param name="argc">num of arguments (should be 2 )</param>
+/// <param name="argv">name of file contain message to encrypt,name file contain the key</param>
+/// <returns>SUCCESS_CODE if all process ran ERR_CODE else</returns>
 int main(int argc, char* argv[])
 {
-	/// <summary>
-	/// open file with message, opens a procces for every 16 bytes of message that contains the message the key 
-	///and the corrent place to read the bytes stop the work when the it reach the length of the text 
-	/// </summary>
-	/// <param name="argc">num of arguments (should be 2 )</param>
-	/// <param name="argv">name of file contain message to encrypt,name file contain the key</param>
-	/// <returns></returns>
 	if (argc != NUM_OF_INPUTS + 1)
 	{
 		printf("ERROR: Not enough input arguments\n");
@@ -30,26 +39,31 @@ int main(int argc, char* argv[])
 	const char* p_massage_file_path = argv[MASSAGE_FILE_IND];
 	const char* p_key_file_path = argv[KEY_FILE_IND];
 	char* comannd = NULL;
-	DWORD file_len = get_file_len("plaintext.txt");
+	DWORD file_len = get_file_len(p_massage_file_path);//get length in bytes of message
 	if (0 == file_len)
 	{
 		printf("the message file is empty\n");
 		return SUCCESS_CODE;
 	}
-	if (file_len % 16)
+	if (file_len % KEY_LEN)
 	{
-		printf("The line does not divisible in 16 \n");
+		printf("the message in file: %s does not divisible in %d\n", p_massage_file_path, KEY_LEN);
+		return ERR_CODE;
+	}
+	if (KEY_LEN != get_file_len(p_massage_file_path))
+	{
+		printf("the key in file: %s does not have %d chars\n", p_massage_file_path, KEY_LEN);
 		return ERR_CODE;
 	}
 	int num_of_dig = file_len % 10;
-	int size = strlen(p_massage_file_path) + strlen(p_key_file_path) + strlen(BEGINCOMANND) + num_of_dig + 4;// 3 ' ' + /0
+	int size = strlen(p_massage_file_path) + strlen(p_key_file_path) + strlen(BEGINCOMANND) + num_of_dig + 4;//text + 3X' ' + /0
 	comannd = (char*)malloc(size * sizeof(char)); 
 	if (NULL == comannd)
 	{
 		printf("wasnt able to allocate memory\n");
 		return ERR_CODE;
 	}
-	for (int offset = 0; offset < file_len ; offset +=16)
+	for (int offset = 0; offset < file_len ; offset += KEY_LEN)
 	{
 		DWORD	exitcode;
 		sprintf_s(comannd, size, "%s %s %d %s", BEGINCOMANND, p_massage_file_path, offset, p_key_file_path);
@@ -65,27 +79,21 @@ int main(int argc, char* argv[])
 	return SUCCESS_CODE;
 }
 
-/**
-* Demonstrates win32 process creation and termination.
-*/
+
+/// <summary>
+/// Gets command line whitch contains argumants for the son,create the process
+/// </summary>
+/// <param name="command">A pointer which hold the command line for son procces</param>
 DWORD create_son_process(LPTSTR p_command)
 {
-	/// <summary>
-	/// Gets command line whitch contains argumants for the son,create the process
-	/// </summary>
-	/// <param name="command">A pointer which hold the command line for son procces</param>
+
 	PROCESS_INFORMATION procinfo;
 	DWORD				waitcode;
 	DWORD				exitcode;
 	BOOL				retVal;
-	 /* TCHAR is a win32
-													generic char which may be either a simple (ANSI) char or a unicode char,
-													depending on behind-the-scenes operating system definitions. Type LPTSTR
-													is a string of TCHARs. Type LPCTSTR is a const string of TCHARs. */
 
-													/*  Start the child process. */
+	/*  Start the child process. */
 	retVal = CreateProcessSimple(p_command, &procinfo);
-
 
 	if (retVal == 0)
 	{
@@ -106,7 +114,6 @@ DWORD create_son_process(LPTSTR p_command)
 	}
 
 	GetExitCodeProcess(procinfo.hProcess, &exitcode);
-	/* Note: process is still being tracked by OS until we release handles */
 	CloseHandle(procinfo.hProcess); /* Closing the handle to the process */
 	CloseHandle(procinfo.hThread); /* Closing the handle to the main thread of the process */
 	return exitcode;
@@ -135,14 +142,14 @@ BOOL CreateProcessSimple(LPTSTR p_commandLine, PROCESS_INFORMATION* p_processInf
 	);
 }
 
+/// <summary>
+/// use CreateFile with default params for read or write and return the handle
+/// </summary>
+/// <param name="file_name">file path</param>
+/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
+/// <returns>handle to file</returns>
 HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 {
-	/// <summary>
-	/// use CreateFile with default params for read or write and return the handle
-	/// </summary>
-	/// <param name="file_name">file path</param>
-	/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
-	/// <returns>handle to file</returns>
 	HANDLE h_file;
 	DWORD last_error;
 	DWORD acsees;
@@ -184,6 +191,11 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 	return h_file;
 }
 
+/// <summary>
+/// return the length in bytes of given file
+/// </summary>
+/// <param name="p_file_name"> path to file</param>
+/// <returns>the length of the file</returns>
 DWORD get_file_len(LPCSTR p_file_name)
 {
 	HANDLE h_file = create_file_simple(p_file_name, 'r');

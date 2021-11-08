@@ -6,6 +6,7 @@
 #define MASSAGE_FILE_IND 1
 #define BEGINCOMANND  "Son.exe"
 #define SUCCESS_CODE 0
+#define KEY_LEN 16
 
 #endif // !HARDCODED_H
 
