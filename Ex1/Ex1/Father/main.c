@@ -63,7 +63,7 @@ int main(int argc, char* argv[])
 		printf("wasnt able to allocate memory\n");
 		return ERR_CODE;
 	}
-	for (int offset = 0; offset < file_len ; offset += KEY_LEN)
+	for (DWORD offset = 0; offset < file_len ; offset += KEY_LEN)
 	{
 		DWORD	exitcode;
 		sprintf_s(comannd, size, "%s %s %d %s", BEGINCOMANND, p_massage_file_path, offset, p_key_file_path);
@@ -98,7 +98,7 @@ DWORD create_son_process(LPTSTR p_command)
 	if (retVal == 0)
 	{
 		printf("Process Creation Failed!\n");
-		return;
+		return ERR_CODE;
 	}
 	waitcode = WaitForSingleObject(
 		procinfo.hProcess,

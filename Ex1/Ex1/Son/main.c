@@ -38,7 +38,7 @@ int main(int argc, char* argv[])
 	const char* key_file_path = argv[KEY_FILE_IND];
 	DWORD offset = atoi(argv[OFFSET_IND]);
 	//init buffers 
-	char read_buffer[FILE_BUFFER+1] = { 0 };//TODO do we need etra 1 char for /0 ?
+	char read_buffer[FILE_BUFFER+1] = { 0 };
 	char key_buffer[FILE_BUFFER+1] = { 0 };
 	
 	if (FILE_BUFFER != read_from_file(message_file_path, offset, read_buffer, FILE_BUFFER))
@@ -86,7 +86,6 @@ long read_from_file(LPCSTR p_file_name ,long offset, LPVOID p_buffer, const DWOR
 		NULL, // 
 		FILE_BEGIN); // provides offset from beginning of the file
 	// Read one character less than the buffer size to save room for 
-	// TODO check if we add extra char dose it change to /0
 	// the terminating NULL character. 
 	if (FALSE == ReadFile(h_file,    //handle to file
 		p_buffer,   // pointer to buffer to save data read from file
