@@ -1,0 +1,19 @@
+#ifndef __HARDCODED_H__
+
+#define NUM_OF_INPUTS 5
+#define ERROR_CODE 1
+#define SUCCESS_CODE 0
+#define NUM_OF_SCHOOLS_IND 1
+#define REAL_CLASS_WEIGHT_IND 2
+#define HUMAN_CLASS_WEIGHT_IND 3
+#define ENGLISH_CLASS_WEIGHT_IND 4
+#define SCHOLL_WEIGHT_IND 5
+#define MAX_NUM_OF_THREADS 10
+
+
+
+
+
+
+
+#endif // !HARDCODED_H
