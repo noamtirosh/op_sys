@@ -9,6 +9,7 @@
 #define ENGLISH_CLASS_WEIGHT_IND 4
 #define SCHOLL_WEIGHT_IND 5
 #define MAX_NUM_OF_THREADS 10
+#define RESULT_DIR_PATH "./Results"
 
 
 
