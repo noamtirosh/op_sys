@@ -100,13 +100,7 @@ DWORD wait_for_remain_schools(const DWORD p_n_open_threads,HANDLE* handle_arr)
 		//close all handle
 		for (int i = 0; i < p_n_open_threads; i++)
 		{
-			multi_wait_code = WaitForMultipleObjects(p_n_open_threads,// num of objects to wait for
-				handle_arr, //array of handels to wait for
-				FALSE, // wait until all of the objects became signaled
-				INFINITE // no time out
-			);
-			/* Check the DWORD returned by MathThread */
-			ret_val = GetExitCodeThread(handle_arr[multi_wait_code], &exit_code);
+			ret_val = GetExitCodeThread(handle_arr[i], &exit_code);
 			if (0 == ret_val)
 			{
 				printf("Error when getting thread exit code\n");
@@ -118,7 +112,7 @@ DWORD wait_for_remain_schools(const DWORD p_n_open_threads,HANDLE* handle_arr)
 
 			}
 			/* Close thread handle */
-			ret_val = CloseHandle(handle_arr[multi_wait_code]);
+			ret_val = CloseHandle(handle_arr[i]);
 			if (FALSE == ret_val)
 			{
 				printf("Error when closing\n");
