@@ -11,7 +11,11 @@
 #define MAX_NUM_OF_THREADS 10
 #define RESULT_DIR_PATH "./Results"
 
-
+#define NUM_OF_GRADE_COMPONENTS 4
+#define FILE_BUFFER 6
+#define MAX_SIZE_NAME 6
+#define TXT_STRING ".txt"
+#define OUTPUT_FILE_NAME_LEN 10
 
 
 
