@@ -15,7 +15,7 @@ typedef struct
 static DWORD WINAPI school_thread(LPVOID lpParam);
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters,	LPDWORD p_thread_id);
 DWORD wait_for_remain_schools(const DWORD p_n_open_threads, HANDLE* handle_arr);
-void school_function(int school_ind);
+int school_function(int school_ind);
 DWORD create_new_school_thread(LPVOID school_params, DWORD* p_n_open_threads, HANDLE* handle_arr);
 
 static int real_weight = 0;
@@ -250,7 +250,7 @@ static DWORD WINAPI school_thread(LPVOID lpParam)
 	return SUCCESS_CODE;
 }
 
-void school_function(int school_ind)
+int school_function(const int school_ind)
 {
 	/// <summary>
 	/// the function work on a single school it gets the number of the school and the grade componnet and build
@@ -258,10 +258,27 @@ void school_function(int school_ind)
 	/// </summary>
 	/// <param name="school_ind">the number of the school</param>
 	/// <param name="school_grade_waight_commponents">the weight of each grade</param>
-	char file_names[][MAX_SIZE_NAME] = { "Real","Human","Eng","Eval" };//array with the names of the four sybjects
-	int school_grade_waight_commponents[] = { real_weight ,human_weight,english_weight,school_weight };
-	int i;
-	char** p_file_name;//name of the files
+	const char file_names[][MAX_SIZE_NAME] = { "Real","Human","Eng","Eval" };//array with the names of the four sybjects
+	int path_len = 2 * MAX_SIZE_NAME + 3 + num_schools / 10 + 1 + strlen(TXT_STRING)+1;// +./ +file_names +/+file_names+TXT_STRING+/0
+	char* p_file_name;//name of the files
+	char* p_files_names[NUM_OF_GRADE_COMPONENTS];
+	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
+	{
+		p_file_name = (char*)malloc(path_len * sizeof(char));//aloction of the names 
+		if (NULL == p_file_name)
+		{
+			printf("wasnt able to allocate memory\n");
+			i--;
+			for (; i > 0; i--)
+			{
+				free(p_files_names[i]);
+			}
+			return ERROR_CODE;
+		}
+		p_files_names[i] = p_file_name;
+		sprintf_s(p_file_name, path_len, "./%s/%s%d%s", file_names[i], file_names[i], school_ind, TXT_STRING);
+	}
+
 	int lenghtDigits;//the legth of the number
 	//write 4 full file names off the school
 	if (school_ind != 0)//the first school that we cannot calculate with the equesion down
@@ -272,23 +289,7 @@ void school_function(int school_ind)
 	{
 		lenghtDigits = 1;//get the length of the school number for the number 0 
 	}
-	int size_max = strlen(file_names[1]) + lenghtDigits + strlen(TXT_STRING);//the maximum string size to file.
-	p_file_name = (char**)malloc(NUM_OF_GRADE_COMPONENTS * sizeof(char*));//alooction of the rows
-	if (NULL == p_file_name)
-	{
-		printf("wasnt able to allocate memory\n");
-	}
-	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
-	{
-		p_file_name[i] = (char*)malloc((size_max + 1) * sizeof(char));//aloction of the names 
-		if (NULL == p_file_name)
-		{
-			printf("wasnt able to allocate memory\n");
-		}
-		sprintf_s(p_file_name[i], size_max, "%s%d%s", file_names[i], school_ind, TXT_STRING);
-	}
-	int x = read_and_write_schools(p_file_name, school_grade_waight_commponents, lenghtDigits, school_ind);
-	if (x = ERROR_CODE)
+	if (ERROR_CODE == read_and_write_schools(p_files_names, lenghtDigits, school_ind))
 	{
 		printf("wasnt able to read or write to files\n");
 
@@ -301,7 +302,7 @@ void school_function(int school_ind)
 
 }
 
-int read_and_write_schools(char** p_file_names, int array_grade_eval[], int lenghtDigits, int school_ind)
+int read_and_write_schools(char** p_files_names, int lenghtDigits, int school_ind)
 {
 	/// <summary>
 	/// the file opens for read the four grades files calculate the finale grade and than writes 
@@ -310,39 +311,46 @@ int read_and_write_schools(char** p_file_names, int array_grade_eval[], int leng
 	/// <param name="p_file_names">array that contanins the all the file names</param>
 	/// <param name="array_grade_eval">array that contains the waight of the grades</param>
 	/// <returns>If the function sucssesful return SUCCESS_CODE else return ERROR_CODE</returns>
-	long file_position[NUM_OF_GRADE_COMPONENTS] = {0};//the postion of each of the four files
-	DWORD file_len = get_file_len(p_file_names[0]);//gets one file length to the while condition
+	DWORD files_offset[NUM_OF_GRADE_COMPONENTS] = {0};//the ofset of each of the four files from beginnig
+	DWORD file_len = get_file_len(p_files_names[0]);//gets one file length to the while condition
 	int result_file_name_len = strlen(OUTPUT_FILE_NAME_LEN) + strlen(TXT_STRING) + (num_schools / 10) + 2;
 	char* p_result_file_name;
 	p_result_file_name = (char*)malloc(result_file_name_len * sizeof(char));//aloction of the names 
+	const int school_grade_waight_commponents[] = { real_weight ,human_weight,english_weight,school_weight };
+	int temp_grade = 0;
+	char result_grade[5] = { 0 };
+	char read_buffer[FILE_BUFFER] = { 0 };
+
 	if (NULL == p_result_file_name)
 	{
 		printf("wasnt able to allocate memory\n");
+		return ERROR_CODE;
 	}
-	while (file_len > file_position[0])
+	while (file_len > files_offset[0])
 	{
-		char read_buffer[FILE_BUFFER];
 		char* p_help_word;//the text we are readinga after the first \n
-		int i;
+		int next_line_ind = 0;
+		temp_grade = 0;
 		int grades_per_student[NUM_OF_GRADE_COMPONENTS];
 		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++) {
-			if (FILE_BUFFER != read_from_file(p_file_names[i], file_position[i], read_buffer, FILE_BUFFER))
+			if (FILE_BUFFER != read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER))
 			{
-				printf("was not able to read message from file: %s\n", p_file_names[i]);
+				printf("was not able to read message from file: %s\n", p_files_names[i]);
 				free(p_result_file_name);
 				return ERROR_CODE;
 			}
-			p_help_word = strchr(read_buffer, '\n');
-			file_position[i] = (int)(p_help_word - read_buffer) + 1;//new position TODO not correct
+			p_help_word = strchr(read_buffer, "\n"); // TODO if end of file and not end with \n
+			*p_help_word = '/0';
+			next_line_ind = strlen(read_buffer);
+			//next_line_ind = (int)(p_help_word - read_buffer) + 1;//new position TODO not correct
+			files_offset[i] += next_line_ind;
+			temp_grade += atoi(read_buffer) * school_grade_waight_commponents[i];
 			//the grade of students 
 		}
-		int final_grade_to_write = calculate_the_final_grade(array_grade_eval, grades_per_student);
-		char grade_to_write_in_file[4];
-		sprintf_s(grade_to_write_in_file, 5, "%d%s", final_grade_to_write, '\n');
+		sprintf_s(result_grade, 5, "%d%s", temp_grade, "\n");
 		int size_max = strlen("results") + lenghtDigits + strlen(TXT_STRING) + 1;
-
 		sprintf_s(p_result_file_name, result_file_name_len, "%s%d%s", RESULT_DIR_PATH, school_ind, TXT_STRING);
-		if (FILE_BUFFER != write_to_file(p_result_file_name, grade_to_write_in_file, 4))
+		if (FILE_BUFFER != write_to_file(p_result_file_name, result_grade, 5))
 		{
 			printf("was not able to write encrypte message from file: %s\n", p_result_file_name);
 			free(p_result_file_name);
