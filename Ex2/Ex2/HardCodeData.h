@@ -14,8 +14,9 @@
 #define NUM_OF_GRADE_COMPONENTS 4
 #define FILE_BUFFER 6
 #define MAX_SIZE_NAME 6
+#define RESULT_FILE_NAME "Results"
 #define TXT_STRING ".txt"
-#define OUTPUT_FILE_NAME_LEN 10
+#define OUTPUT_FILE_NAME_LEN 21
 
 
 

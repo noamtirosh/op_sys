@@ -227,17 +227,17 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 
 	thread_handle = CreateThread(
 		NULL,                /*  default security attributes */
-		0,                   /*  use default stack size */
-		p_start_routine,     /*  thread function */
-		p_thread_parameters, /*  argument to thread function */
-		0,                   /*  use default creation flags */
-		p_thread_id);        /*  returns the thread identifier */
-	if (NULL == thread_handle)
-	{
-		printf("Couldn't create thread\n");
-		exit(ERROR_CODE);
-	}
-	return thread_handle;
+0,                   /*  use default stack size */
+p_start_routine,     /*  thread function */
+p_thread_parameters, /*  argument to thread function */
+0,                   /*  use default creation flags */
+p_thread_id);        /*  returns the thread identifier */
+if (NULL == thread_handle)
+{
+	printf("Couldn't create thread\n");
+	exit(ERROR_CODE);
+}
+return thread_handle;
 }
 
 
@@ -246,8 +246,7 @@ static DWORD WINAPI school_thread(LPVOID lpParam)
 {
 	school* p_current_school = NULL;
 	p_current_school = (school*)lpParam;
-	school_function(p_current_school->school_num);
-	return SUCCESS_CODE;
+	return school_function(p_current_school->school_num);
 }
 
 int school_function(const int school_ind)
@@ -259,7 +258,7 @@ int school_function(const int school_ind)
 	/// <param name="school_ind">the number of the school</param>
 	/// <param name="school_grade_waight_commponents">the weight of each grade</param>
 	const char file_names[][MAX_SIZE_NAME] = { "Real","Human","Eng","Eval" };//array with the names of the four sybjects
-	int path_len = 2 * MAX_SIZE_NAME + 3 + num_schools / 10 + 1 + strlen(TXT_STRING)+1;// +./ +file_names +/+file_names+TXT_STRING+/0
+	int path_len = 2 * MAX_SIZE_NAME + 3 + num_schools / 10 + 1 + strlen(TXT_STRING) + 1;// +./ +file_names +/+file_names+TXT_STRING+/0
 	char* p_file_name;//name of the files
 	char* p_files_names[NUM_OF_GRADE_COMPONENTS];
 	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
@@ -278,31 +277,24 @@ int school_function(const int school_ind)
 		p_files_names[i] = p_file_name;
 		sprintf_s(p_file_name, path_len, "./%s/%s%d%s", file_names[i], file_names[i], school_ind, TXT_STRING);
 	}
-
-	int lenghtDigits;//the legth of the number
-	//write 4 full file names off the school
-	if (school_ind != 0)//the first school that we cannot calculate with the equesion down
-	{
-		lenghtDigits = floor(log10(abs(school_ind))) + 1;//get the length of the school
-	}
-	else
-	{
-		lenghtDigits = 1;//get the length of the school number for the number 0 
-	}
-	if (ERROR_CODE == read_and_write_schools(p_files_names, lenghtDigits, school_ind))
+	if (ERROR_CODE == read_and_write_schools(p_files_names, school_ind))
 	{
 		printf("wasnt able to read or write to files\n");
+		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
+		{
+			free(p_files_names[i]);
+		}
+		return ERROR_CODE;
 
 	}
 	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
 	{
-		free(p_file_name[i]);
+		free(p_files_names[i]);
 	}
-	free(p_file_name);
-
+	return SUCCESS_CODE;
 }
 
-int read_and_write_schools(char** p_files_names, int lenghtDigits, int school_ind)
+int read_and_write_schools(char** p_files_names, int school_ind)
 {
 	/// <summary>
 	/// the file opens for read the four grades files calculate the finale grade and than writes 
@@ -311,13 +303,13 @@ int read_and_write_schools(char** p_files_names, int lenghtDigits, int school_in
 	/// <param name="p_file_names">array that contanins the all the file names</param>
 	/// <param name="array_grade_eval">array that contains the waight of the grades</param>
 	/// <returns>If the function sucssesful return SUCCESS_CODE else return ERROR_CODE</returns>
-	DWORD files_offset[NUM_OF_GRADE_COMPONENTS] = {0};//the ofset of each of the four files from beginnig
+	DWORD files_offset[NUM_OF_GRADE_COMPONENTS] = { 0 };//the ofset of each of the four files from beginnig
 	DWORD file_len = get_file_len(p_files_names[0]);//gets one file length to the while condition
-	int result_file_name_len = strlen(OUTPUT_FILE_NAME_LEN) + strlen(TXT_STRING) + (num_schools / 10) + 2;
+	int result_file_name_len = OUTPUT_FILE_NAME_LEN + (num_schools / 10) + 2;// len of"./Results/Results.txt" + num of dig + \0
 	char* p_result_file_name;
 	p_result_file_name = (char*)malloc(result_file_name_len * sizeof(char));//aloction of the names 
 	const int school_grade_waight_commponents[] = { real_weight ,human_weight,english_weight,school_weight };
-	int temp_grade = 0;
+	float temp_grade = 0;
 	char result_grade[5] = { 0 };
 	char read_buffer[FILE_BUFFER] = { 0 };
 
@@ -333,24 +325,35 @@ int read_and_write_schools(char** p_files_names, int lenghtDigits, int school_in
 		temp_grade = 0;
 		int grades_per_student[NUM_OF_GRADE_COMPONENTS];
 		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++) {
-			if (FILE_BUFFER != read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER))
+			int num_bytes_readen = read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER);
+			if (FILE_BUFFER != num_bytes_readen && (file_len - files_offset[i]) != num_bytes_readen)
 			{
-				printf("was not able to read message from file: %s\n", p_files_names[i]);
-				free(p_result_file_name);
-				return ERROR_CODE;
+				if ((get_file_len(p_files_names[i]) - files_offset[i]) == num_bytes_readen)
+				{
+					//finsh file
+					files_offset[i] = get_file_len(p_files_names[i]);
+				}
+				else
+				{
+					printf("was not able to read message from file: %s\n", p_files_names[i]);
+					free(p_result_file_name);
+					return ERROR_CODE;
+				}
+
 			}
-			p_help_word = strchr(read_buffer, "\n"); // TODO if end of file and not end with \n
-			*p_help_word = '/0';
+			
+			p_help_word = strchr(read_buffer, '\n'); // TODO if end of file and not end with \n
+			*p_help_word = '\0';
 			next_line_ind = strlen(read_buffer);
 			//next_line_ind = (int)(p_help_word - read_buffer) + 1;//new position TODO not correct
-			files_offset[i] += next_line_ind;
+			files_offset[i] += (next_line_ind + 1);		
 			temp_grade += atoi(read_buffer) * school_grade_waight_commponents[i];
 			//the grade of students 
 		}
-		sprintf_s(result_grade, 5, "%d%s", temp_grade, "\n");
-		int size_max = strlen("results") + lenghtDigits + strlen(TXT_STRING) + 1;
-		sprintf_s(p_result_file_name, result_file_name_len, "%s%d%s", RESULT_DIR_PATH, school_ind, TXT_STRING);
-		if (FILE_BUFFER != write_to_file(p_result_file_name, result_grade, 5))
+		temp_grade = temp_grade / (100^NUM_OF_GRADE_COMPONENTS);
+		sprintf_s(result_grade, 5, "%d%s", (int)temp_grade, "\n");
+		sprintf_s(p_result_file_name, result_file_name_len, "%s/%s%d%s", RESULT_DIR_PATH, RESULT_FILE_NAME, school_ind, TXT_STRING);
+		if (5 != write_to_file(p_result_file_name, result_grade, 5))
 		{
 			printf("was not able to write encrypte message from file: %s\n", p_result_file_name);
 			free(p_result_file_name);
@@ -362,23 +365,6 @@ int read_and_write_schools(char** p_files_names, int lenghtDigits, int school_in
 	return SUCCESS_CODE;
 }
 
-int calculate_the_final_grade(int array_grade_eval[], int array_student_grade[])
-{
-	/// <summary>
-	/// The code calculates the final grade off the student
-	/// </summary>
-	/// <param name="array_grade_eval">array that contains the part of the subject in the final result</param>
-	/// <param name="array_student_grade">array that contains each of the grades the studant have in each subject</param>
-	/// <returns>return the final result we will write in the grade file</returns>
-	int i;
-	int final_grade = 0;
-	for (i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
-	{
-		final_grade = (array_grade_eval[i] * array_student_grade[i]) + final_grade;
-	}
-	final_grade = final_grade / 100;
-	return final_grade;
-}
 
 /// <summary>
 /// use CreateFile with default params for read or write and return the handle
@@ -438,11 +424,11 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len)
 {
 	HANDLE h_file = create_file_simple(p_file_name, 'r');
-	DWORD n_written = 0;
+	DWORD n_readen = 0;
 	DWORD last_error;
 	if (INVALID_HANDLE_VALUE == h_file)
 	{
-		return n_written;
+		return n_readen;
 	}
 	//move file pointer in ofset
 	SetFilePointer(
@@ -455,13 +441,13 @@ long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWOR
 	if (FALSE == ReadFile(h_file,    //handle to file
 		p_buffer,   // pointer to buffer to save data read from file
 		buffer_len, //maximum number of bytes to be read
-		&n_written, NULL))
+		&n_readen, NULL))
 	{
 		last_error = GetLastError();
 		printf("Unable to read from file, error: %ld\n", last_error);
 	}
 	CloseHandle(h_file);
-	return n_written;
+	return n_readen;
 
 }
 
@@ -501,4 +487,18 @@ long write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
 	}
 	CloseHandle(h_file);
 	return n_written;
+}
+
+DWORD get_file_len(LPCSTR p_file_name)
+{
+	HANDLE h_file = create_file_simple(p_file_name, 'r');
+	DWORD current_file_position;
+	//move file pointer in ofset
+	current_file_position = SetFilePointer(
+		h_file,	//handle to file
+		0, // number of bytes to move the file pointer
+		NULL, // 
+		FILE_END);
+	CloseHandle(h_file);
+	return current_file_position;
 }
