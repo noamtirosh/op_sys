@@ -258,14 +258,14 @@ static DWORD WINAPI school_thread(LPVOID lpParam)
 	return school_function(*p_current_school);
 }
 
+/// <summary>
+/// the function work on a single school it gets the number of the school and the grade componnet and build
+/// text file witch hold for each student the final grades
+/// </summary>
+/// <param name="school_ind">the number of the school</param>
+/// <param name="school_grade_waight_commponents">the weight of each grade</param>
 DWORD school_function(const int school_ind)
 {
-	/// <summary>
-	/// the function work on a single school it gets the number of the school and the grade componnet and build
-	/// text file witch hold for each student the final grades
-	/// </summary>
-	/// <param name="school_ind">the number of the school</param>
-	/// <param name="school_grade_waight_commponents">the weight of each grade</param>
 	const char file_names[][MAX_SIZE_NAME] = { "Real","Human","Eng","Eval" };//array with the names of the four sybjects
 	int path_len = 2 * MAX_SIZE_NAME + 3 + num_schools / 10 + 1 + strlen(TXT_STRING) + 1;// +./ +file_names +/+file_names+TXT_STRING+/0
 	char* p_file_name;//name of the files
@@ -304,15 +304,15 @@ DWORD school_function(const int school_ind)
 	return SUCCESS_CODE;
 }
 
+/// <summary>
+/// the file opens for read the four grades files calculate the finale grade and than writes 
+/// the final grade in result<n>.txt file
+/// </summary>
+/// <param name="p_file_names">array that contanins the all the file names</param>
+/// <param name="array_grade_eval">array that contains the waight of the grades</param>
+/// <returns>If the function sucssesful return SUCCESS_CODE else return ERROR_CODE</returns>
 int read_and_write_schools(char** p_files_names, int school_ind)
 {
-	/// <summary>
-	/// the file opens for read the four grades files calculate the finale grade and than writes 
-	/// the final grade in result<n>.txt file
-	/// </summary>
-	/// <param name="p_file_names">array that contanins the all the file names</param>
-	/// <param name="array_grade_eval">array that contains the waight of the grades</param>
-	/// <returns>If the function sucssesful return SUCCESS_CODE else return ERROR_CODE</returns>
 	DWORD files_offset[NUM_OF_GRADE_COMPONENTS] = { 0 };//the ofset of each of the four files from beginnig
 	DWORD file_len = get_file_len(p_files_names[0]);//gets one file length to the while condition
 	int result_file_name_len = OUTPUT_FILE_NAME_LEN + (num_schools / 10) + 2;// len of"./Results/Results.txt" + num of dig + \0
@@ -336,12 +336,13 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 		int grades_per_student[NUM_OF_GRADE_COMPONENTS]={0};
 		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++) {
 			DWORD num_bytes_readen = read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER);
-			if (FILE_BUFFER != num_bytes_readen && (file_len - files_offset[i]) != num_bytes_readen)
+			if (FILE_BUFFER != num_bytes_readen )
 			{
 				if ((get_file_len(p_files_names[i]) - files_offset[i]) == num_bytes_readen)
 				{
 					//finsh file
 					files_offset[i] = get_file_len(p_files_names[i]);
+
 				}
 				else
 				{
@@ -351,11 +352,12 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 				}
 
 			}
-			
-			p_help_word = strchr(read_buffer, '\n'); // TODO if end of file and not end with \n
-			*p_help_word = '\0';
+			else
+			{
+				p_help_word = strchr(read_buffer, '\n'); // TODO if end of file and not end with \n
+				*p_help_word = '\0';
+			}
 			next_line_ind = strlen(read_buffer);
-			//next_line_ind = (int)(p_help_word - read_buffer) + 1;//new position TODO not correct
 			files_offset[i] += (next_line_ind + 1);		
 			temp_grade += atoi(read_buffer) * school_grade_waight_commponents[i];
 			//the grade of students 
