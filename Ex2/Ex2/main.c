@@ -138,22 +138,18 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 	return return_val;
 }
 
-void force_close(const DWORD num_open_threads, HANDLE* handle_arr)
-{
 
-}
-
-/// <summary>
-/// get params input for create new threads and num of open threads and handls array 
-/// create new thread and put it handle in the arry if num of open threads not exide MAX_NUM_OF_THREADS
-/// else wait for one of the threads to be signaled and replace its handle.
-/// </summary>
-/// <param name="school_params"></param>
-/// <param name="p_n_open_threads"></param>
-/// <param name="handle_arr"></param>
-/// <returns></returns>
 DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HANDLE *handle_arr)
 {
+	/// <summary>
+	/// get params input for create new threads and num of open threads and handls array 
+	/// create new thread and put it handle in the arry if num of open threads not exide MAX_NUM_OF_THREADS
+	/// else wait for one of the threads to be signaled and replace its handle.
+	/// </summary>
+	/// <param name="school_params"></param>
+	/// <param name="p_n_open_threads"></param>
+	/// <param name="handle_arr"></param>
+	/// <returns></returns>
 	DWORD multi_wait_code;
 	DWORD exit_code;
 	BOOL ret_val;
