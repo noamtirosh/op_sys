@@ -183,6 +183,12 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 			printf("Error when getting thread exit code\n");
 			return ERROR_CODE;
 		}
+		//if thread retrun exit code of error 
+		if (ERROR_CODE == exit_code)
+		{
+			printf("one of the thread give error exit code\n");
+			return ERROR_CODE;
+		}
 		/* Close thread handle */
 		ret_val = CloseHandle(handle_arr[multi_wait_code]);
 		if (0 == ret_val)
