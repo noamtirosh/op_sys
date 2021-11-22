@@ -70,6 +70,7 @@ int main(int argc, char* argv[])
 			printf("was not able to create new thread for school num %d\n",i);
 			//wait all threds close or trminate remain
 			wait_for_remain_schools(num_of_open_threads, thread_handle_arr);
+			free(p_school_array);
 			return ERROR_CODE;
 		}
 	}
@@ -77,6 +78,7 @@ int main(int argc, char* argv[])
 	if (ERROR_CODE == wait_code)
 	{
 		printf("error wen waitting for all threads to finsh\n");
+		free(p_school_array);
 		return ERROR_CODE;
 	}
 	//free memory for thread parameters
@@ -86,15 +88,16 @@ int main(int argc, char* argv[])
 
 }
 
-/// <summary>
-/// wait until all the threads that open became signaled
-/// and cloose akk their handls if they gave success exit code.
-/// </summary>
-/// <param name="num_open_threads"> num of open threads</param>
-/// <param name="handle_arr"> array of handles for the threads </param>
-/// <returns> SUCCESS_CODE if finsh to close all handles ERROR_CODE else</returns>
+
 DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 {
+	/// <summary>
+	/// wait until all the threads that open became signaled
+	/// and cloose all their handls if they gave success exit code.
+	/// </summary>
+	/// <param name="num_open_threads"> num of open threads</param>
+	/// <param name="handle_arr"> array of handles for the threads </param>
+	/// <returns> SUCCESS_CODE if finsh to close all handles ERROR_CODE else</returns>
 	DWORD exit_code;
 	BOOL ret_val;
 	BOOL return_val = SUCCESS_CODE;
@@ -116,8 +119,9 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 		ret_val = GetExitCodeThread(handle_arr[i], &exit_code);
 		if (ERROR_RET == ret_val || STILL_ACTIVE == exit_code)
 		{
+			//if thread didnt end terminate it
 			TerminateThread(handle_arr[i], ERROR_CODE);
-			printf("Error when getting thread exit code\n");
+			printf("Error when getting thread exit code\n terminate thread\n");
 			return_val = ERROR_CODE;
 		}
 		//if thread retrun exit code of error 
@@ -253,14 +257,17 @@ return thread_handle;
 
 static DWORD WINAPI school_thread(LPVOID lpParam)
 {
+	//the thread func input - int : school num
 	int* p_current_school = NULL;
 	p_current_school = (int*)lpParam;
 	return school_function(*p_current_school);
 }
 
 /// <summary>
-/// the function work on a single school it gets the number of the school and the grade componnet and build
-/// text file witch hold for each student the final grades
+/// read gread fiels from defult dirs (see file_names) that ends withe school_ind 
+/// each row in those is student grate
+/// write total grade for eche student to result file ends with school_ind
+/// acording to global given waights 
 /// </summary>
 /// <param name="school_ind">the number of the school</param>
 /// <param name="school_grade_waight_commponents">the weight of each grade</param>
