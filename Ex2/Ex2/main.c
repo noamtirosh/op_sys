@@ -178,14 +178,14 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 
 		/* Check the DWORD returned by MathThread */
 		ret_val = GetExitCodeThread(handle_arr[multi_wait_code], &exit_code);
-		if (ERROR_CODE == ret_val)
+		if (0 == ret_val)
 		{
 			printf("Error when getting thread exit code\n");
 			return ERROR_CODE;
 		}
 		/* Close thread handle */
 		ret_val = CloseHandle(handle_arr[multi_wait_code]);
-		if (ERROR_CODE == ret_val)
+		if (0 == ret_val)
 		{
 			printf("Error when closing\n");
 			return ERROR_CODE;
@@ -310,7 +310,7 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 	p_result_file_name = (char*)malloc(result_file_name_len * sizeof(char));//aloction of the names 
 	const int school_grade_waight_commponents[] = { real_weight ,human_weight,english_weight,school_weight };
 	float temp_grade = 0;
-	char result_grade[5] = { 0 };
+	char result_grade[FILE_BUFFER] = { 0 };
 	char read_buffer[FILE_BUFFER] = { 0 };
 
 	if (NULL == p_result_file_name)
@@ -335,7 +335,7 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 				}
 				else
 				{
-					printf("was not able to read message from file: %s\n", p_files_names[i]);
+					printf("unable to read message from file: %s\n", p_files_names[i]);
 					free(p_result_file_name);
 					return ERROR_CODE;
 				}
@@ -350,12 +350,13 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 			temp_grade += atoi(read_buffer) * school_grade_waight_commponents[i];
 			//the grade of students 
 		}
-		temp_grade = temp_grade / (100^NUM_OF_GRADE_COMPONENTS);
-		sprintf_s(result_grade, 5, "%d%s", (int)temp_grade, "\n");
+		temp_grade = temp_grade / 100;
+		sprintf_s(result_grade, FILE_BUFFER, "%d%s", (int)temp_grade, "\r\n");
 		sprintf_s(p_result_file_name, result_file_name_len, "%s/%s%d%s", RESULT_DIR_PATH, RESULT_FILE_NAME, school_ind, TXT_STRING);
-		if (5 != write_to_file(p_result_file_name, result_grade, 5))
+		int line_len = strlen(result_grade);
+		if (line_len != write_to_file(p_result_file_name, result_grade, line_len))
 		{
-			printf("was not able to write encrypte message from file: %s\n", p_result_file_name);
+			printf("unable write message to file: %s\n", p_result_file_name);
 			free(p_result_file_name);
 			return ERROR_CODE;
 		}
