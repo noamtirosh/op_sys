@@ -3,6 +3,7 @@
 #define NUM_OF_INPUTS 5
 #define ERROR_CODE 1
 #define SUCCESS_CODE 0
+#define ERROR_RET 0
 #define NUM_OF_SCHOOLS_IND 1
 #define REAL_CLASS_WEIGHT_IND 2
 #define HUMAN_CLASS_WEIGHT_IND 3
@@ -10,7 +11,6 @@
 #define SCHOLL_WEIGHT_IND 5
 #define MAX_NUM_OF_THREADS 10
 #define RESULT_DIR_PATH "./Results"
-
 #define NUM_OF_GRADE_COMPONENTS 4
 #define FILE_BUFFER 6
 #define MAX_SIZE_NAME 6

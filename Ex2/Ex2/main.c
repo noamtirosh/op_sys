@@ -3,20 +3,21 @@
 #include "HardCodeData.h"
 #include <string.h>
 
-// Types -----------------------------------------------------------------------
+int school_num;
 
-typedef struct
-{
-	int school_num;
-} school;
 
 
 // function declration
 static DWORD WINAPI school_thread(LPVOID lpParam);
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters,	LPDWORD p_thread_id);
 DWORD wait_for_remain_schools(const DWORD p_n_open_threads, HANDLE* handle_arr);
-int school_function(int school_ind);
+DWORD school_function(int school_ind);
 DWORD create_new_school_thread(LPVOID school_params, DWORD* p_n_open_threads, HANDLE* handle_arr);
+DWORD get_file_len(LPCSTR p_file_name);
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
+DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
+int read_and_write_schools(char** p_files_names, int school_ind);
+
 
 static int real_weight = 0;
 static int human_weight = 0;
@@ -24,7 +25,8 @@ static int english_weight = 0;
 static int school_weight = 0;
 static int num_schools = 0;
 
-school* p_school_array  = NULL;
+
+int* p_school_array  = NULL;
 
 
 int main(int argc, char* argv[])
@@ -53,7 +55,7 @@ int main(int argc, char* argv[])
 
 	//create tread for ech school
 	//Allocate memory for thread parameters
-	p_school_array = (school*)malloc(num_schools*sizeof(school));
+	p_school_array = (int*)malloc(num_schools*sizeof(int));
 	if (NULL == p_school_array)
 	{
 		printf("Error when allocating memory\n");
@@ -62,10 +64,11 @@ int main(int argc, char* argv[])
 	//create thread for ech school 
 	for (int i = 0; i < num_schools; i++)
 	{
-		(p_school_array + i)->school_num = i;
+		*(p_school_array + i) = i;
 		if (ERROR_CODE == create_new_school_thread((p_school_array + i), &num_of_open_threads, thread_handle_arr))
 		{
 			printf("was not able to create new thread for school num %d\n",i);
+
 			return ERROR_CODE;
 		}
 	}
@@ -111,7 +114,7 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 		for (DWORD i = 0; i < num_open_threads; i++)
 		{
 			ret_val = GetExitCodeThread(handle_arr[i], &exit_code);
-			if (0 == ret_val)
+			if (ERROR_RET == ret_val)
 			{
 				printf("Error when getting thread exit code\n");
 				return ERROR_CODE;
@@ -124,7 +127,7 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 			}
 			/* Close thread handle */
 			ret_val = CloseHandle(handle_arr[i]);
-			if (FALSE == ret_val)
+			if (ERROR_RET == ret_val)
 			{
 				printf("Error when closing thread handle\n");
 				return ERROR_CODE;
@@ -178,7 +181,7 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 
 		/* Check the DWORD returned by MathThread */
 		ret_val = GetExitCodeThread(handle_arr[multi_wait_code], &exit_code);
-		if (0 == ret_val)
+		if (ERROR_RET == ret_val)
 		{
 			printf("Error when getting thread exit code\n");
 			return ERROR_CODE;
@@ -191,7 +194,7 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 		}
 		/* Close thread handle */
 		ret_val = CloseHandle(handle_arr[multi_wait_code]);
-		if (0 == ret_val)
+		if (ERROR_RET == ret_val)
 		{
 			printf("Error when closing\n");
 			return ERROR_CODE;
@@ -250,12 +253,12 @@ return thread_handle;
 
 static DWORD WINAPI school_thread(LPVOID lpParam)
 {
-	school* p_current_school = NULL;
-	p_current_school = (school*)lpParam;
-	return school_function(p_current_school->school_num);
+	int* p_current_school = NULL;
+	p_current_school = (int*)lpParam;
+	return school_function(*p_current_school);
 }
 
-int school_function(const int school_ind)
+DWORD school_function(const int school_ind)
 {
 	/// <summary>
 	/// the function work on a single school it gets the number of the school and the grade componnet and build
@@ -297,6 +300,7 @@ int school_function(const int school_ind)
 	{
 		free(p_files_names[i]);
 	}
+	printf("finsh school %d successfully\n", school_ind);
 	return SUCCESS_CODE;
 }
 
@@ -329,9 +333,9 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 		char* p_help_word;//the text we are readinga after the first \n
 		int next_line_ind = 0;
 		temp_grade = 0;
-		int grades_per_student[NUM_OF_GRADE_COMPONENTS];
+		int grades_per_student[NUM_OF_GRADE_COMPONENTS]={0};
 		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++) {
-			int num_bytes_readen = read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER);
+			DWORD num_bytes_readen = read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER);
 			if (FILE_BUFFER != num_bytes_readen && (file_len - files_offset[i]) != num_bytes_readen)
 			{
 				if ((get_file_len(p_files_names[i]) - files_offset[i]) == num_bytes_readen)
@@ -359,7 +363,7 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 		temp_grade = temp_grade / 100;
 		sprintf_s(result_grade, FILE_BUFFER, "%d%s", (int)temp_grade, "\r\n");
 		sprintf_s(p_result_file_name, result_file_name_len, "%s/%s%d%s", RESULT_DIR_PATH, RESULT_FILE_NAME, school_ind, TXT_STRING);
-		int line_len = strlen(result_grade);
+		DWORD line_len = strlen(result_grade);
 		if (line_len != write_to_file(p_result_file_name, result_grade, line_len))
 		{
 			printf("unable write message to file: %s\n", p_result_file_name);
@@ -428,7 +432,7 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 /// <param name="p_buffer"> pointer to buffer to put message</param>
 /// <param name="buffer_len">length of message to read</param>
 /// <returns>num of bytes readed from file</returns>
-long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len)
+DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len)
 {
 	HANDLE h_file = create_file_simple(p_file_name, 'r');
 	DWORD n_readen = 0;
@@ -465,7 +469,7 @@ long read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWOR
 /// <param name="p_buffer">pointer to buffer</param>
 /// <param name="buffer_len"> the length of the buffer</param>
 /// <returns> num of bytes written to file</returns>
-long write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
 {
 	HANDLE h_file = create_file_simple(p_file_name, 'w');
 	DWORD last_error;
@@ -487,10 +491,6 @@ long write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
 	{
 		last_error = GetLastError();
 		printf("Unable to write to file, error: %ld\n", last_error);
-	}
-	if (n_written == buffer_len)
-	{
-		printf("write all buffer\n");
 	}
 	CloseHandle(h_file);
 	return n_written;
