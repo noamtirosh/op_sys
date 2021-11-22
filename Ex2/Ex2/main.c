@@ -19,18 +19,25 @@ DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWO
 int read_and_write_schools(char** p_files_names, int school_ind);
 
 
-static int real_weight = 0;
-static int human_weight = 0;
-static int english_weight = 0;
-static int school_weight = 0;
-static int num_schools = 0;
+static int g_real_weight = 0;
+static int g_human_weight = 0;
+static int g_english_weight = 0;
+static int g_school_weight = 0;
+static int g_num_schools = 0;
 
 
-int* p_school_array  = NULL;
+int* pg_school_array  = NULL;
 
 
 int main(int argc, char* argv[])
 {
+	/// <summary>
+	/// get number of schools and start from 0 - read 4 grade files in 4 defult folders for ech school
+	/// calculate using the waegits the final grade for each student
+	/// and then write them all in a result files for each individual school
+	/// </summary>
+	/// <param>number of school and waights for diffrent subjects</param>
+	/// <returns>If code succsesful return 0 else return 1</returns>																											
 	HANDLE thread_handle_arr[MAX_NUM_OF_THREADS];
 	DWORD wait_code;
 	DWORD num_of_open_threads = 0;
@@ -47,42 +54,38 @@ int main(int argc, char* argv[])
 		return ERROR_CODE;
 	}
 	//get global params
-	num_schools = atoi(argv[NUM_OF_SCHOOLS_IND]);
-	real_weight = atoi(argv[REAL_CLASS_WEIGHT_IND]);
-	human_weight = atoi(argv[HUMAN_CLASS_WEIGHT_IND]);
-	english_weight = atoi(argv[ENGLISH_CLASS_WEIGHT_IND]);
-	school_weight = atoi(argv[SCHOLL_WEIGHT_IND]);
+	g_num_schools = atoi(argv[NUM_OF_SCHOOLS_IND]);
+	g_real_weight = atoi(argv[REAL_CLASS_WEIGHT_IND]);
+	g_human_weight = atoi(argv[HUMAN_CLASS_WEIGHT_IND]);
+	g_english_weight = atoi(argv[ENGLISH_CLASS_WEIGHT_IND]);
+	g_school_weight = atoi(argv[SCHOLL_WEIGHT_IND]);
 
 	//create tread for ech school
 	//Allocate memory for thread parameters
-	p_school_array = (int*)malloc(num_schools*sizeof(int));
-	if (NULL == p_school_array)
+	pg_school_array = (int*)malloc(g_num_schools*sizeof(int));
+	if (NULL == pg_school_array)
 	{
 		printf("Error when allocating memory\n");
 		return ERROR_CODE;
 	}
 	//create thread for ech school 
-	for (int i = 0; i < num_schools; i++)
+	for (int i = 0; i < g_num_schools; i++)
 	{
-		*(p_school_array + i) = i;
-		if (ERROR_CODE == create_new_school_thread((p_school_array + i), &num_of_open_threads, thread_handle_arr))
+		*(pg_school_array + i) = i;
+		if (ERROR_CODE == create_new_school_thread((pg_school_array + i), &num_of_open_threads, thread_handle_arr))
 		{
-			printf("was not able to create new thread for school num %d\n",i);
-			//wait all threds close or trminate remain
-			wait_for_remain_schools(num_of_open_threads, thread_handle_arr);
-			free(p_school_array);
-			return ERROR_CODE;
+			printf("was not able to create new thread for school num %d \n",i);
 		}
 	}
 	wait_code = wait_for_remain_schools(num_of_open_threads, thread_handle_arr);
 	if (ERROR_CODE == wait_code)
 	{
 		printf("error wen waitting for all threads to finsh\n");
-		free(p_school_array);
+		free(pg_school_array);
 		return ERROR_CODE;
 	}
 	//free memory for thread parameters
-	free(p_school_array);
+	free(pg_school_array);
 	return SUCCESS_CODE;
 
 
@@ -109,8 +112,7 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 	);
 	if (WAIT_OBJECT_0 != multi_wait_code)
 	{	
-		//TODO if get error do we need to close threads?
-		printf("Error when waiting\n");
+		printf("Error when waiting for threads to finsh\n");
 		return_val =  ERROR_CODE;
 	}
 	//close all handle
@@ -142,7 +144,6 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 	return return_val;
 }
 
-
 DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HANDLE *handle_arr)
 {
 	/// <summary>
@@ -158,18 +159,19 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 	DWORD exit_code;
 	BOOL ret_val;
 	DWORD thread_id;
-	if (*p_n_open_threads < MAX_NUM_OF_THREADS)
+	if (*p_n_open_threads < MAX_NUM_OF_THREADS) 
 	{
 		(*p_n_open_threads)++;
 		handle_arr[(*p_n_open_threads)-1] = CreateThreadSimple(school_thread, school_params, &thread_id);
 		if (NULL == handle_arr[(*p_n_open_threads) - 1])
 		{
-			printf("Error when creating thread\n");
+			printf("Error when creating new thread for school \n");
 			return ERROR_CODE;
 		}
 	}
 	else
 	{
+		// need to wait for one of the thraeds to finsh before create new one
 		multi_wait_code = WaitForMultipleObjects(*p_n_open_threads,// num of objects to wait for
 			handle_arr, //array of handels to wait for
 			FALSE, // wait until one of the objects became signaled
@@ -182,25 +184,22 @@ DWORD create_new_school_thread(LPVOID school_params,DWORD *p_n_open_threads, HAN
 			return ERROR_CODE;
 		}
 		//for one of the threads finsh
-
-		/* Check the DWORD returned by MathThread */
 		ret_val = GetExitCodeThread(handle_arr[multi_wait_code], &exit_code);
 		if (ERROR_RET == ret_val)
 		{
-			printf("Error when getting thread exit code\n");
+			printf("Error when try to get thread exit code\n");
 			return ERROR_CODE;
 		}
 		//if thread retrun exit code of error 
 		if (ERROR_CODE == exit_code)
 		{
-			printf("one of the thread give error exit code\n");
-			return ERROR_CODE;
+			printf("thread give error exit code\n");
 		}
 		/* Close thread handle */
 		ret_val = CloseHandle(handle_arr[multi_wait_code]);
 		if (ERROR_RET == ret_val)
 		{
-			printf("Error when closing\n");
+			printf("Error when try closing exist thread\n");
 			return ERROR_CODE;
 		}
 		handle_arr[multi_wait_code] = CreateThreadSimple(school_thread, school_params, &thread_id);
@@ -222,6 +221,13 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 	LPVOID p_thread_parameters,
 	LPDWORD p_thread_id)
 {
+	/// <summary>
+	///create a thread and return the handle
+	/// </summary>
+	/// <param name="p_start_routine">thread function</param>
+	/// <param name="p_thread_parameters">the argumants of thread function</param>
+	/// <param name="p_thread_id">pointre tahte give us the id number of the thread</param>
+	/// <returns>HANDLE to the thread</returns>
 	HANDLE thread_handle;
 
 	if (NULL == p_start_routine)
@@ -260,7 +266,12 @@ static DWORD WINAPI school_thread(LPVOID lpParam)
 	//the thread func input - int : school num
 	int* p_current_school = NULL;
 	p_current_school = (int*)lpParam;
-	return school_function(*p_current_school);
+	if (SUCCESS_CODE != school_function(*p_current_school))
+	{
+		printf("thread for school: %d crashed\n", *p_current_school);
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
 }
 
 /// <summary>
@@ -274,9 +285,10 @@ static DWORD WINAPI school_thread(LPVOID lpParam)
 DWORD school_function(const int school_ind)
 {
 	const char file_names[][MAX_SIZE_NAME] = { "Real","Human","Eng","Eval" };//array with the names of the four sybjects
-	int path_len = 2 * MAX_SIZE_NAME + 3 + num_schools / 10 + 1 + strlen(TXT_STRING) + 1;// +./ +file_names +/+file_names+TXT_STRING+/0
+	int path_len = 2 * MAX_SIZE_NAME + 3 + g_num_schools / 10 + 1 + strlen(TXT_STRING) + 1;// +./ +file_names +/+file_names+TXT_STRING+/0
 	char* p_file_name;//name of the files
 	char* p_files_names[NUM_OF_GRADE_COMPONENTS];
+	int return_val = SUCCESS_CODE; 
 	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
 	{
 		p_file_name = (char*)malloc(path_len * sizeof(char));//aloction of the names 
@@ -291,24 +303,22 @@ DWORD school_function(const int school_ind)
 			return ERROR_CODE;
 		}
 		p_files_names[i] = p_file_name;
-		sprintf_s(p_file_name, path_len, "./%s/%s%d%s", file_names[i], file_names[i], school_ind, TXT_STRING);
+		sprintf_s(p_file_name, path_len, "./%s/%s%d%s", file_names[i], file_names[i], school_ind, TXT_STRING);//genrate path to file to read the grades
 	}
-	if (ERROR_CODE == read_and_write_schools(p_files_names, school_ind))
+	if (ERROR_CODE == read_and_write_schools(p_files_names, school_ind)) //read and write the scholl grades to a txt file
 	{
 		printf("wasnt able to read or write to files\n");
-		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
-		{
-			free(p_files_names[i]);
-		}
-		return ERROR_CODE;
-
+		return_val = ERROR_CODE;
 	}
-	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)
+	else
+	{
+		printf("finsh school %d successfully\n", school_ind);
+	}
+	for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++)// free the aloction 
 	{
 		free(p_files_names[i]);
 	}
-	printf("finsh school %d successfully\n", school_ind);
-	return SUCCESS_CODE;
+	return return_val;
 }
 
 /// <summary>
@@ -322,12 +332,12 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 {
 	DWORD files_offset[NUM_OF_GRADE_COMPONENTS] = { 0 };//the ofset of each of the four files from beginnig
 	DWORD file_len = get_file_len(p_files_names[0]);//gets one file length to the while condition
-	int result_file_name_len = OUTPUT_FILE_NAME_LEN + (num_schools / 10) + 2;// len of"./Results/Results.txt" + num of dig + \0
+	int result_file_name_len = OUTPUT_FILE_NAME_LEN + (g_num_schools / 10) + 2;// len of"./Results/Results.txt" + num of dig + \0
 	char* p_result_file_name;
 	p_result_file_name = (char*)malloc(result_file_name_len * sizeof(char));//aloction of the names 
-	const int school_grade_waight_commponents[] = { real_weight ,human_weight,english_weight,school_weight };
+	const int school_grade_waight_commponents[] = { g_real_weight ,g_human_weight,g_english_weight,g_school_weight };// array of the wight grade
 	float temp_grade = 0;
-	char result_grade[FILE_BUFFER] = { 0 };
+	char result_grade[FILE_BUFFER] = { 0 };// the string of the final grade that we will right in the result
 	char read_buffer[FILE_BUFFER] = { 0 };
 
 	if (NULL == p_result_file_name)
@@ -335,13 +345,14 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 		printf("wasnt able to allocate memory\n");
 		return ERROR_CODE;
 	}
-	while (file_len > files_offset[0])
+	while (file_len > files_offset[0]) //cheack until the offset is larger than the file len this means we read all the chars in the file
 	{
-		char* p_help_word;//the text we are readinga after the first \n
+		char* p_help_word;//the text we are reading after the first \n
 		int next_line_ind = 0;
 		temp_grade = 0;
 		int grades_per_student[NUM_OF_GRADE_COMPONENTS]={0};
 		for (int i = 0; i < NUM_OF_GRADE_COMPONENTS; i++) {
+			//read file from the offset string with length of FILE_BUFFER
 			DWORD num_bytes_readen = read_from_file(p_files_names[i], files_offset[i], read_buffer, FILE_BUFFER);
 			if (FILE_BUFFER != num_bytes_readen )
 			{
@@ -361,7 +372,7 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 			}
 			else
 			{
-				p_help_word = strchr(read_buffer, '\n'); // TODO if end of file and not end with \n
+				p_help_word = strchr(read_buffer, '\n');
 				*p_help_word = '\0';
 			}
 			next_line_ind = strlen(read_buffer);
@@ -370,8 +381,9 @@ int read_and_write_schools(char** p_files_names, int school_ind)
 			//the grade of students 
 		}
 		temp_grade = temp_grade / 100;
+		//write the result grade to file
 		sprintf_s(result_grade, FILE_BUFFER, "%d%s", (int)temp_grade, "\r\n");
-		sprintf_s(p_result_file_name, result_file_name_len, "%s/%s%d%s", RESULT_DIR_PATH, RESULT_FILE_NAME, school_ind, TXT_STRING);
+		sprintf_s(p_result_file_name, result_file_name_len, "%s/%s%d%s", RESULT_DIR_PATH, RESULT_FILE_NAME, school_ind, TXT_STRING);//generate name of the result file
 		DWORD line_len = strlen(result_grade);
 		if (line_len != write_to_file(p_result_file_name, result_grade, line_len))
 		{
