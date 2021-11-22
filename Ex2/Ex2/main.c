@@ -68,7 +68,8 @@ int main(int argc, char* argv[])
 		if (ERROR_CODE == create_new_school_thread((p_school_array + i), &num_of_open_threads, thread_handle_arr))
 		{
 			printf("was not able to create new thread for school num %d\n",i);
-
+			//wait all threds close or trminate remain
+			wait_for_remain_schools(num_of_open_threads, thread_handle_arr);
 			return ERROR_CODE;
 		}
 	}
@@ -96,6 +97,7 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 {
 	DWORD exit_code;
 	BOOL ret_val;
+	BOOL return_val = SUCCESS_CODE;
 	DWORD multi_wait_code;
 	multi_wait_code = WaitForMultipleObjects(num_open_threads,// num of objects to wait for
 		handle_arr, //array of handels to wait for
@@ -106,37 +108,39 @@ DWORD wait_for_remain_schools(const DWORD num_open_threads,HANDLE* handle_arr)
 	{	
 		//TODO if get error do we need to close threads?
 		printf("Error when waiting\n");
-		return ERROR_CODE;
+		return_val =  ERROR_CODE;
 	}
-	else
+	//close all handle
+	for (DWORD i = 0; i < num_open_threads; i++)
 	{
-		//close all handle
-		for (DWORD i = 0; i < num_open_threads; i++)
+		ret_val = GetExitCodeThread(handle_arr[i], &exit_code);
+		if (ERROR_RET == ret_val || STILL_ACTIVE == exit_code)
 		{
-			ret_val = GetExitCodeThread(handle_arr[i], &exit_code);
-			if (ERROR_RET == ret_val)
-			{
-				printf("Error when getting thread exit code\n");
-				return ERROR_CODE;
-			}
-			//if thread retrun exit code of error 
-			if(ERROR_CODE == exit_code)
-			{
-				printf("one of the thread give error exit code\n");
-				return ERROR_CODE;
-			}
-			/* Close thread handle */
-			ret_val = CloseHandle(handle_arr[i]);
-			if (ERROR_RET == ret_val)
-			{
-				printf("Error when closing thread handle\n");
-				return ERROR_CODE;
-			}
-
+			TerminateThread(handle_arr[i], ERROR_CODE);
+			printf("Error when getting thread exit code\n");
+			return_val = ERROR_CODE;
+		}
+		//if thread retrun exit code of error 
+		if(ERROR_CODE == exit_code)
+		{
+			printf("one of the thread give error exit code\n");
+			return_val =  ERROR_CODE;
+		}
+		/* Close thread handle */
+		ret_val = CloseHandle(handle_arr[i]);
+		if (ERROR_RET == ret_val)
+		{
+			printf("Error when closing thread handle\n");
+			return_val = ERROR_CODE;
 		}
 
 	}
-	return SUCCESS_CODE;
+	return return_val;
+}
+
+void force_close(const DWORD num_open_threads, HANDLE* handle_arr)
+{
+
 }
 
 /// <summary>
