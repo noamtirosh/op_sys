@@ -1,5 +1,5 @@
 //////////////////////////////////////
-/*
+/*struct page_info
 * Authors – Noam Tirosh 314962945, Daniel Kogan 315786418
 * project : Ex3
 * Description: TODO add discription
@@ -12,21 +12,52 @@
 #include <math.h>
 #include <ctype.h>
 
-struct page_info {
+typedef struct row_obj_s {
 	int start_time;
 	int page_number;
 	int work_time;
-};
-typedef struct lookup_table_info {//the number of this struct will be outer structure of page_number we will difine array of g_page[page_number]
+}row_obj_t;
+
+typedef struct lookup_table_info_s {//the number of this struct will be outer structure of page_number we will difine array of g_page[page_number]
 	int g_frame_number;
 	int valid;
 	int end_time;
-};
+}lookup_table_info_t;
+
+typedef struct page_obj_s {
+	int g_frame_number;
+	int valid;
+	int end_time;
+} page_obj_t;
+
+typedef struct frame_obj_s {
+	int page_number;
+	int end_time;
+} frame_obj_t;
+
+typedef struct thread_input_s {
+	int time;
+	int virtual_page_num;
+	int physical_frame_num;
+	char eviction_placement;
+}thread_input_t;
+
+static HANDLE g_out_put_file;
+static HANDLE g_page_table_mutex_handle = NULL;
+static HANDLE g_can_evict_frame_semapore;
+page_obj_t* pg_page_table[];
+int num_of_frames = 0;
+int frame_lru[]
+frame_obj_t frame_table[];
+int current_row_ind = 0;
+int n_rows = 0;
+row_obj_t next_row;
+
 
 DWORD get_file_len(LPCSTR p_file_name);
 DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
-int build_table_for_calcultion(char* p_line, struct page_info pages[]);
-int open_thread_for_commands(struct page_info pages[], struct lookup_table_info table[], int num_of_frame, int number_of_command_line);
+int build_table_for_calcultion(char* p_line, row_obj_t pages[]);
+int open_thread_for_commands(row_obj_t pages[], lookup_table_info_t table[], int num_of_frame, int number_of_command_line);
 int count_chars(const char* string, char ch);
 int main(int argc, char* argv[])
 {
@@ -36,34 +67,35 @@ int main(int argc, char* argv[])
 		printf("ERROR: Not enough input arguments\n");
 		return ERROR_CODE;
 	}
-	const char* p_message_file_path = NULL;//the path to open the file
-	const char* p_ex_name = NULL;//the name of the exition
+	const char* p_input_file_path = argv[INPUT_FILE_PATH_IND];//the path to open the file
 	int page_number;//the number of pages
 	int frame_number;//the number of frames
+	page_number = pow(2, atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND]) - 12);//we are looking for number we dont have overflow or double
+	frame_number = pow(2, atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - 12);
+	page_number  = 2 ^ (atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM);
+	frame_number = 2 ^ (atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM);
 
-	p_message_file_path = argv[MASSAGE_FILE_IND];
-	p_ex_name = argv[EX_IND];
-	page_number = pow(2, atoi(argv[VIRTUAL_MEMORY_IND]) - 12);//we are looking for number we dont have overflow or double
-	frame_number = pow(2, atoi(argv[PHYSICAL_MEMORY_IND]) - 12);
-
-	struct lookup_table_info* pages = (struct lookup_table_info*)malloc(page_number * sizeof(struct lookup_table_info));
+	 lookup_table_info_t* pages = (lookup_table_info_t*)malloc(page_number * sizeof(lookup_table_info_t)); //TODO free memory when return error 
 	if (NULL == pages)
 	{
 		printf("Error when allocating memory\n");
 		return ERROR_CODE;
 	}
-
-	int length_of_text = get_file_len(p_message_file_path);
+	
+	//read input file
+	int length_of_text = get_file_len(p_input_file_path);
+	// read all file at once TODO change to line by line
 	p_full_text = (char*)malloc((length_of_text + 1) * sizeof(char));
 	if (NULL == p_full_text)
 	{
 		printf("Error when allocating memory\n");
 		return ERROR_CODE;
 	}
-	DWORD num_bytes_readen = read_from_file(p_message_file_path, 0, p_full_text, length_of_text);
+	DWORD num_bytes_readen = read_from_file(p_input_file_path, 0, p_full_text, length_of_text);
 	p_full_text[strlen(p_full_text) - 1] = '\0';
 	int number_of_command_line = count_chars(p_full_text, '/n');
-	struct page_info* command_lines = (struct page_info*)malloc((number_of_command_line) * sizeof(struct page_info));
+	//for each line alocate mem for page - page array
+	row_obj_t* command_lines = (row_obj_t*)malloc((number_of_command_line) * sizeof(row_obj_t));
 	if (NULL == command_lines)
 	{
 		printf("Error when allocating memory\n");
@@ -78,6 +110,55 @@ int main(int argc, char* argv[])
 
 }
 
+
+void run_pages()
+{
+	BOOL release_res;
+	LONG previous_count;
+	int current_time = 0;
+	g_can_evict_frame_semapore = CreateSemaphore(
+		NULL,	/* Default security attributes */
+		num_of_frames,		/* Initial Count - all slots are empty */
+		num_of_frames,		/* Maximum Count */
+		NULL); /* un-named */
+	HANDLE *thread_handle_arr = (HANDLE*)malloc((n_rows) * sizeof(HANDLE));
+	thread_input_t* thread_input_arr = (thread_input_t*)malloc((n_rows) * sizeof(thread_input_t));
+	while (current_row_ind != n_rows)
+	{
+		//create new thread
+		if (next_row.start_time == current_time)
+		{
+			DWORD thread_id;
+			//init data in thread_input
+			thread_input_arr[current_row_ind].time = current_time; // TODO mybe dalete
+			thread_handle_arr[current_row_ind] = CreateThreadSimple(page_thread, thread_input_arr+ current_row_ind, &thread_id);
+			//move to next row TODO get next row
+		}
+		//check_if_any_frame_end
+		for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+		{
+			if (frame_table[frame_ind].end_time == current_time)
+			{
+				//add frame to fifio
+				release_res = ReleaseSemaphore(
+					g_can_evict_frame_semapore,
+					1, 		/* Signal that exactly one cell was emptied */
+					&previous_count);
+				if (release_res == FALSE)
+				{
+					//TODO print error
+				}
+				//TODO check taht in first time not entere condition if semapore if full
+			}
+
+		}
+		current_time++;
+		
+	}
+	
+	//wait for pages in frams to end
+	CloseHandle(g_can_evict_frame_semapore);
+}
 int count_chars(const char* string, char ch)
 {
 	int count = 0;
@@ -94,7 +175,7 @@ int count_chars(const char* string, char ch)
 	return count;
 }
 
-int build_table_for_calcultion(char* p_line, struct page_info pages[])
+int build_table_for_calcultion(char* p_line, row_obj_t pages[])
 {
 	/// <summary>
 	/// the code will break the text file to the command lines that build him
@@ -124,7 +205,7 @@ int build_table_for_calcultion(char* p_line, struct page_info pages[])
 	}
 	return SUCCESS_CODE;
 }
-int open_thread_for_commands(struct page_info pages[], struct lookup_table_info table[], int num_of_frame, int number_of_command_line)
+int open_thread_for_commands(row_obj_t pages[], lookup_table_info_t table[], int num_of_frame, int number_of_command_line)
 {
 	/// <summary>
 	/// 
@@ -145,11 +226,89 @@ int open_thread_for_commands(struct page_info pages[], struct lookup_table_info 
 	{
 		if (clock == pages[i].start_time)
 		{
-			thread_handle_arr[i] = CreateThreadSimple(school_thread, school_params, &thread_id);
+			thread_handle_arr[i] = CreateThreadSimple(page_thread, school_params, &thread_id);
 			i = i + 1;
 		}
 	}
 	return SUCCESS_CODE;
+}
+
+static DWORD WINAPI page_thread(LPVOID lpParam)
+{
+	//the thread func input - 
+	DWORD wait_code;
+	BOOL ret_val;
+	thread_input_t *p_current_page_input = (thread_input_t*)lpParam;
+	wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
+	if (WAIT_OBJECT_0 != wait_code)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	/*
+	* Critical Section
+	* We can now safely access the page_table resource.
+	* 
+	*/
+	// is the page as a active frame?
+	if (pg_page_table[p_current_page_input->virtual_page_num]->valid) //TODO make shure virtual_page_num start from 0
+	{
+		// the page as a active frame 
+		//update end_of_use in page table TODO change name to end_of_use
+		int new_end_of_use = max(pg_page_table[p_current_page_input->virtual_page_num]->end_time, p_current_page_input->time);
+		pg_page_table[p_current_page_input->virtual_page_num]->end_time = new_end_of_use;
+		//update end_of_use in frame table
+		frame_table[pg_page_table[p_current_page_input->virtual_page_num]->g_frame_number].end_time = new_end_of_use;// no need to print
+	}
+	ret_val = ReleaseMutex(g_page_table_mutex_handle);
+	if (FALSE == ret_val)
+	{
+		printf("Error when releasing\n");
+		return ERROR_CODE;
+	}
+	wait_code = WaitForSingleObject(g_can_evict_frame_semapore, INFINITE);
+	if (wait_code != WAIT_OBJECT_0)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	//there is a empty_frame or frame that can be evicted
+	//is the frame that can be evicted contain the page
+	if (pg_page_table[p_current_page_input->virtual_page_num]->valid)
+	{
+		//no need to print
+	}
+	// is there a empty frame?
+	else
+	{
+		//TODO think how to 
+	}
+	//need to evicted frame and place the page
+	{
+	}
+
+
+	//if (SUCCESS_CODE != 1)
+	//{
+	//	printf("thread for school: %d crashed\n", *p_current_school);
+	//	return ERROR_CODE;
+	//}
+	return SUCCESS_CODE;
+}
+DWORD print_to_output_file(int time,int virtual_page_num ,int physical_frame_num, char eviction_placement)
+{
+	DWORD num_char_written = 0;
+	int write_buffer_len = floor(log10(time)) +1+ floor(log10(virtual_page_num)) +1+ floor(log10(physical_frame_num))+1 + 1 + 6; // time+virtual_page_num+physical_frame_num+eviction_placement+"   \r\n"
+	char* write_buffer = (char*)malloc(write_buffer_len * sizeof(char));
+	//TODO check maloc
+	sprintf_s(write_buffer, write_buffer_len, "%d %d %d %c\r\n", time, virtual_page_num, physical_frame_num, eviction_placement);
+	num_char_written = write_to_file(g_out_put_file, write_buffer, write_buffer_len);
+	free(write_buffer);
+	if (num_char_written == write_buffer_len)
+	{
+		return SUCCESS_CODE;
+	}
+	return ERROR_CODE;//TODO add print
 }
 
 HANDLE create_file_simple(LPCSTR p_file_name, char mode)
@@ -249,6 +408,42 @@ DWORD get_file_len(LPCSTR p_file_name)
 	CloseHandle(h_file);
 	return current_file_position;
 }
+
+
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
+{
+	/// <summary>
+	///  write message from p_buffer in len buffer_len to file 
+	/// </summary>
+	/// <param name="file_name">path to file to write the buffer</param>
+	/// <param name="p_buffer">pointer to buffer</param>
+	/// <param name="buffer_len"> the length of the buffer</param>
+	/// <returns> num of bytes written to file</returns>
+	HANDLE h_file = create_file_simple(p_file_name, 'w');
+	DWORD last_error;
+	DWORD n_written = 0;
+	if (INVALID_HANDLE_VALUE == h_file)
+	{
+		return n_written;
+	}
+	//move file pointer in ofset
+	SetFilePointer(
+		h_file,	//handle to file
+		0, // number of bytes to move the file pointer
+		NULL, // 
+		FILE_END);
+	if (FALSE == WriteFile(h_file,
+		p_buffer,
+		buffer_len,
+		&n_written, NULL))
+	{
+		last_error = GetLastError();
+		printf("Unable to write to file, error: %ld\n", last_error);
+	}
+	CloseHandle(h_file);
+	return n_written;
+}
+
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 	LPVOID p_thread_parameters,
 	LPDWORD p_thread_id)

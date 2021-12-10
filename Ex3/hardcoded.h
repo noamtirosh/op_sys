@@ -1,23 +1,16 @@
 #ifndef __HARDCODED_H__
 
-#define NUM_OF_INPUTS 4
+#define NUM_OF_INPUTS 3
 #define ERROR_CODE 1
 #define SUCCESS_CODE 0
 #define ERROR_RET 0
-#define EX_IND 1
-#define VIRTUAL_MEMORY_IND 2
-#define PHYSICAL_MEMORY_IND 3
-#define MASSAGE_FILE_IND 4
-#define MAX_NUM_OF_THREADS 10
-#define RESULT_DIR_PATH "./Results"
-#define NUM_OF_GRADE_COMPONENTS 4
-#define FILE_BUFFER 6
-#define MAX_SIZE_NAME 6
-#define RESULT_FILE_NAME "Results"
-#define TXT_STRING ".txt"
-#define OUTPUT_FILE_NAME_LEN 21
-
-
+#define NUM_BITS_IN_VIRTUAL_MEM_IND 1
+#define NUM_BITS_PHYSICAL_MEM_IND 2
+#define INPUT_FILE_PATH_IND 3
+#define OUTPUT_PATH "Output.txt"
+#define MAX_BITS_IN_MEM 32
+#define MIN_BITS_IN_MEM 12
+#define PAGE_SIZE 2^12
 
 
 
