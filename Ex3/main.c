@@ -10,7 +10,6 @@
 #include "hardcoded.h"
 #include <string.h>
 #include <math.h>
-#include <ctype.h>
 
 typedef struct row_obj_s {
 	int start_time;
@@ -25,7 +24,7 @@ typedef struct lookup_table_info_s {//the number of this struct will be outer st
 }lookup_table_info_t;
 
 typedef struct page_obj_s {
-	int g_frame_number;
+	int frame_number;
 	int valid;
 	int end_time;
 } page_obj_t;
@@ -47,7 +46,7 @@ static HANDLE g_page_table_mutex_handle = NULL;
 static HANDLE g_can_evict_frame_semapore;
 page_obj_t* pg_page_table[];
 int num_of_frames = 0;
-int frame_lru[]
+int frame_lru[];
 frame_obj_t frame_table[];
 int current_row_ind = 0;
 int n_rows = 0;
@@ -70,8 +69,6 @@ int main(int argc, char* argv[])
 	const char* p_input_file_path = argv[INPUT_FILE_PATH_IND];//the path to open the file
 	int page_number;//the number of pages
 	int frame_number;//the number of frames
-	page_number = pow(2, atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND]) - 12);//we are looking for number we dont have overflow or double
-	frame_number = pow(2, atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - 12);
 	page_number  = 2 ^ (atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM);
 	frame_number = 2 ^ (atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM);
 
