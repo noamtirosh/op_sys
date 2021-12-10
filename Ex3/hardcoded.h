@@ -11,6 +11,8 @@
 #define MAX_BITS_IN_MEM 32
 #define MIN_BITS_IN_MEM 12
 #define PAGE_SIZE 2^12
+#define EVICT_CODE 'E'
+#define PLACEMENT_CODE 'P'
 
 
 
