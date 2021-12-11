@@ -13,6 +13,8 @@
 #define PAGE_SIZE 2^12
 #define EVICT_CODE 'E'
 #define PLACEMENT_CODE 'P'
+#define NOT_USE_FRAME_END_TIME -1
+#define NOT_VALID  0
 
 
 

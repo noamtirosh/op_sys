@@ -36,7 +36,7 @@ typedef struct frame_obj_s {
 
 typedef struct thread_input_s {
 	int call_time;
-	int physical_frame_num;
+	int virtual_page_num;
 	char work_time;
 }thread_input_t;
 
@@ -47,11 +47,13 @@ typedef struct lru_cell_s {
 
 static HANDLE g_out_put_file;
 static HANDLE g_page_table_mutex_handle = NULL;
-static HANDLE g_frames_to_evict_semapore;
+static HANDLE g_frames_to_evict_semapore = NULL;
+int n_frame_in_table = 0;
 page_obj_t *pg_page_table;
 frame_obj_t *pg_frame_table;
 char* pg_full_text;
 int num_of_frames = 0;
+int num_of_pages = 0;
 lru_cell_t *lru_head =NULL;
 lru_cell_t* lru_tail = NULL;
 int current_row_ind = 0;
@@ -72,28 +74,38 @@ int main(int argc, char* argv[])
 		return ERROR_CODE;
 	}
 	const char* p_input_file_path = argv[INPUT_FILE_PATH_IND];//the path to open the file
-	int page_number;//the number of pages
 	int frame_number;//the number of frames
-	page_number  = 2 ^ (atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM);
-	frame_number = 2 ^ (atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM);
+	num_of_pages = 2 ^ (atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM);
+	num_of_frames = 2 ^ (atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM);
 	//alocate memory for page table and frame table
-	pg_page_table = (page_obj_t*)malloc(page_number * sizeof(page_obj_t));
-	pg_frame_table = (frame_obj_t*)malloc(frame_number * sizeof(frame_obj_t));
-	if (NULL == pg_page_table || NULL== pg_frame_table)
+	pg_page_table = (page_obj_t*)malloc(num_of_pages * sizeof(page_obj_t));
+	pg_frame_table = (frame_obj_t*)malloc(num_of_frames * sizeof(frame_obj_t));
+	if (NULL == pg_page_table)
 	{
-		printf("Error when allocating memory\n");
+		printf("Error when allocating memory for page_table\n");
 		return ERROR_CODE;
 	}
+	if (NULL == pg_frame_table)
+	{
+		printf("Error when allocating memory for farme_table\n");
+		return ERROR_CODE;
+	}
+	initial_tables();
 	//read input file
 	int length_of_text = get_file_len(p_input_file_path);
 	// read all file at once TODO change to line by line
 	pg_full_text = (char*)malloc((length_of_text + 1) * sizeof(char));
 	if (NULL == pg_full_text)
 	{
-		printf("Error when allocating memory\n");
+		printf("Error when allocating memory for input file text\n");
 		return ERROR_CODE;
 	}
 	DWORD num_bytes_readen = read_from_file(p_input_file_path, 0, pg_full_text, length_of_text);
+	if (num_bytes_readen != length_of_text)
+	{
+		printf("Error when try to read input file %s\n", p_input_file_path);
+		return ERROR_CODE;
+	}
 	pg_full_text[strlen(pg_full_text) - 1] = '\0';
 	n_rows = count_chars(pg_full_text, '/n');
 	//for each line alocate mem for page - page array
@@ -128,7 +140,6 @@ void run_pages()
 	HANDLE *thread_handle_arr = (HANDLE*)malloc((n_rows) * sizeof(HANDLE));
 
 	thread_input_t* thread_input_arr = (thread_input_t*)malloc((n_rows) * sizeof(thread_input_t));
-
 	while (current_row_ind != n_rows)
 	{
 		//create new thread
@@ -138,14 +149,14 @@ void run_pages()
 			//init data in thread_input
 			thread_input_arr[current_row_ind].call_time = current_time; 
 			thread_input_arr[current_row_ind].work_time = next_row.work_time;
-			thread_input_arr[current_row_ind].physical_frame_num = next_row.physical_frame_num;
+			thread_input_arr[current_row_ind].virtual_page_num = next_row.physical_frame_num;
 			thread_handle_arr[current_row_ind] = CreateThreadSimple(page_thread, thread_input_arr + current_row_ind, &thread_id);
 			//move to next row TODO get next row
 		}
 		//check_if_any_frame_end
 		for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
 		{
-			if (pg_frame_table[frame_ind].end_time == current_time)
+			if (pg_frame_table[frame_ind].end_time == current_time) // TODO need to start frames end time to be -1
 			{
 				//add frame to fifio
 				release_res = ReleaseSemaphore(
@@ -233,6 +244,9 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	BOOL ret_val;
 
 	thread_input_t *p_current_page_input = (thread_input_t*)lpParam;
+	int placement_time = p_current_page_input->call_time;
+	int page_ind = p_current_page_input->virtual_page_num;
+	int page_work_time = p_current_page_input->work_time;
 	wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
 	if (WAIT_OBJECT_0 != wait_code)
 	{
@@ -243,13 +257,13 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	* Critical Section
 	* We can now safely access the page_table resource.	*/
 	// is the page as a active frame?
-	if (pg_page_table[p_current_page_input->physical_frame_num].valid) //TODO make shure virtual_page_num start from 0
+	if (pg_page_table[p_current_page_input->virtual_page_num].valid) //TODO make shure virtual_page_num start from 0
 	{
 		//update end_of_use in page table TODO change name to end_of_use
-		int new_end_of_use = max(pg_page_table[p_current_page_input->physical_frame_num].end_time, p_current_page_input->call_time);
-		pg_page_table[p_current_page_input->physical_frame_num].end_time = new_end_of_use;
+		int new_end_of_use = max(pg_page_table[page_ind].end_time, p_current_page_input->call_time);
+		pg_page_table[p_current_page_input->virtual_page_num].end_time = new_end_of_use;
 		//update end_of_use in frame table
-		pg_frame_table[pg_page_table[p_current_page_input->physical_frame_num].frame_number].end_time = new_end_of_use;// no need to print
+		pg_frame_table[pg_page_table[p_current_page_input->virtual_page_num].frame_number].end_time = new_end_of_use;// no need to print
 	}
 	ret_val = ReleaseMutex(g_page_table_mutex_handle);
 	if (FALSE == ret_val)
@@ -266,29 +280,39 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	//there is a empty_frame or frame that can be evicted
 	wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
 	//is the frame that can be evicted contain the page
-	if (pg_page_table[p_current_page_input->physical_frame_num].valid)
+	if (pg_page_table[p_current_page_input->virtual_page_num].valid)
 	{
 		//update page table
-		int new_end_of_time = pg_page_table[p_current_page_input->physical_frame_num].end_time;
+		int new_end_of_time = pg_page_table[p_current_page_input->virtual_page_num].end_time;
 		new_end_of_time = max(new_end_of_time, p_current_page_input->call_time + p_current_page_input->work_time);
-		pg_page_table[p_current_page_input->physical_frame_num].end_time = new_end_of_time;
+		pg_page_table[p_current_page_input->virtual_page_num].end_time = new_end_of_time;
 		//update frame tabel 
-		pg_frame_table[pg_page_table[p_current_page_input->physical_frame_num].frame_number].end_time = new_end_of_time;
+		pg_frame_table[pg_page_table[p_current_page_input->virtual_page_num].frame_number].end_time = new_end_of_time;
 		//no need to print
 	}
 	// is there a empty frame?
-	else if (get_lru_len(lru_head))
+	else if (get_empty_frame_ind() == -1)
 	{
-		//TODO think how to 
+		int empty_frame_ind = get_empty_frame_ind();
+		int end_time = p_current_page_input->call_time + p_current_page_input->work_time;
+		int new_page_num = p_current_page_input->virtual_page_num;
+		//updeate frame tabel
+		pg_frame_table[empty_frame_ind].end_time = end_time;
+		pg_frame_table[empty_frame_ind].page_number = new_page_num;
+		//update page tabel
+		pg_page_table[new_page_num].end_time = end_time;
+		pg_page_table[new_page_num].valid = 1;
+		pg_page_table[new_page_num].frame_number = empty_frame_ind;
+		print_to_output_file(evict_time, p_current_page_input->virtual_page_num, frame_to_evict, PLACEMENT_CODE);
 
 	}
-	else if(1) 
+	else
 	{
 		//need to evicted frame and place the page
 		int frame_to_evict = lru_head->frame_index;
 		int evict_time = max(pg_frame_table[frame_to_evict].end_time, p_current_page_input->call_time);
 		int page_to_unvalid = pg_frame_table[frame_to_evict].page_number;
-		int new_page_num = p_current_page_input->physical_frame_num;
+		int new_page_num = p_current_page_input->virtual_page_num;
 		print_to_output_file(evict_time, page_to_unvalid, frame_to_evict, EVICT_CODE);
 		//updeate frame tabel
 		pg_frame_table[frame_to_evict].end_time = evict_time + p_current_page_input->work_time;
@@ -298,7 +322,7 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		pg_page_table[new_page_num].end_time = evict_time + p_current_page_input->work_time;
 		pg_page_table[new_page_num].valid = 1;
 		pg_page_table[new_page_num].frame_number = frame_to_evict;
-		print_to_output_file(evict_time, p_current_page_input->physical_frame_num, frame_to_evict, PLACEMENT_CODE);
+		print_to_output_file(evict_time, p_current_page_input->virtual_page_num, frame_to_evict, PLACEMENT_CODE);
 		//remove frame from lru
 		lru_cell_t* temp_lru_head = lru_head->next;
 		free(lru_head);
@@ -526,5 +550,30 @@ void free_memory(int stage)
 		free(pg_full_text);
 	default:
 		break;
+	}
+}
+
+int get_empty_frame_ind()
+{
+	//TODO need to be safe with mutex
+	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	{
+		if (pg_frame_table[frame_ind].end_time == NOT_USE_FRAME_END_TIME) // TODO need to start frames end time to be -1
+		{
+			return frame_ind;
+		}
+	}
+		return -1;
+}
+
+void initial_tables()
+{
+	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	{
+		pg_frame_table[frame_ind].end_time = NOT_USE_FRAME_END_TIME;
+	}
+	for (int page_ind = 0; page_ind < num_of_pages; page_ind++)
+	{
+		pg_page_table[page_ind].valid = NOT_VALID;
 	}
 }
