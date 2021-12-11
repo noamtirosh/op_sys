@@ -194,6 +194,13 @@ DWORD run_pages()
 				current_row_ind++;
 			}
 		}
+		
+		wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
+		if (WAIT_OBJECT_0 != wait_code)
+		{
+			printf("Error when waiting for mutex\n");
+			return ERROR_CODE;
+		}
 		//check_if_any_frame_end
 		for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
 		{
@@ -201,12 +208,6 @@ DWORD run_pages()
 			{
 
 				//update lru //TODO add mutex
-				wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
-				if (WAIT_OBJECT_0 != wait_code)
-				{
-					printf("Error when waiting for mutex\n");
-					return ERROR_CODE;
-				}
 				lru_cell_t* lru_new_cell = (lru_cell_t*)malloc(sizeof(lru_cell_t));//TODO add malloc check
 				if (NULL == lru_new_cell)
 				{
@@ -228,12 +229,6 @@ DWORD run_pages()
 					}
 					temp_cell->next = lru_new_cell;
 				}
-				ret_val = ReleaseMutex(g_page_table_mutex_handle);
-				if (FALSE == ret_val)
-				{
-					printf("Error when releasing\n");
-					return ERROR_CODE;
-				}
 				release_res = ReleaseSemaphore(
 					g_frames_to_evict_semapore,
 					1, 		/* Signal that exactly one cell was emptied */
@@ -247,6 +242,12 @@ DWORD run_pages()
 				//TODO check taht in first time not entere condition if semapore if full
 			}
 
+		}
+		ret_val = ReleaseMutex(g_page_table_mutex_handle);
+		if (FALSE == ret_val)
+		{
+			printf("Error when releasing\n");
+			return ERROR_CODE;
 		}
 		current_time++;
 		
@@ -265,6 +266,18 @@ DWORD run_pages()
 		printf("Error when waiting for threads to finsh\n");
 		return ERROR_CODE;
 	}
+	//find last end_time
+	int last_end_time = 0;
+	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	{
+		last_end_time = max(pg_frame_table[frame_ind].end_time, last_end_time);
+	}
+	//print all the end time in frame tabel
+	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	{
+		print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE);
+	}
+
 	CloseHandle(g_frames_to_evict_semapore);
 }
 int count_chars(const char* string, char ch)
