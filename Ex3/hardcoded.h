@@ -10,12 +10,13 @@
 #define OUTPUT_PATH "Output.txt"
 #define MAX_BITS_IN_MEM 32
 #define MIN_BITS_IN_MEM 12
-#define PAGE_SIZE 2^12
+#define PAGE_SIZE 4096
 #define EVICT_CODE 'E'
 #define PLACEMENT_CODE 'P'
 #define NOT_USE_FRAME_END_TIME -1
 #define NOT_VALID  0
-
+#define VALID 1 
+#define NUM_ROW_PARAMS 3
 
 
 #endif // !HARDCODED_H
