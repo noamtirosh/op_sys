@@ -181,6 +181,12 @@ DWORD run_pages()
 			thread_input_arr[current_row_ind].work_time = next_row_input.work_time;
 			thread_input_arr[current_row_ind].virtual_page_num = next_row_input.physical_frame_num;
 			thread_handle_arr[current_row_ind] = CreateThreadSimple(page_thread, thread_input_arr + current_row_ind, &thread_id);
+			wait_code = WaitForSingleObject(g_main_semapore, INFINITE);
+			if (WAIT_OBJECT_0 != wait_code)
+			{
+				printf("Error when waiting for mutex\n");
+				return ERROR_CODE;
+			}
 			//move to next row
 			if (!strlen(next_line))
 			{
@@ -350,12 +356,6 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	int placement_time = p_current_page_input->call_time;
 	int page_ind = p_current_page_input->virtual_page_num;
 	int page_work_time = p_current_page_input->work_time;
-	wait_code = WaitForSingleObject(thread_semaphore_arr[p_current_page_input->row_num], INFINITE);
-	if (WAIT_OBJECT_0 != wait_code)
-	{
-		printf("Error when waiting for thread semaphore\n");
-		return ERROR_CODE;
-	}
 	wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
 	if (WAIT_OBJECT_0 != wait_code)
 	{
@@ -424,17 +424,14 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		return ERROR_CODE;
 	}
 	//release semaphore for next thred
-	if (p_current_page_input->row_num < n_rows - 1)
+	ret_val = ReleaseSemaphore(
+		g_main_semapore,
+		1, 		/* Signal that exactly one cell was emptied */
+		&wait_code);
+	if (FALSE == ret_val)
 	{
-		ret_val = ReleaseSemaphore(
-			thread_semaphore_arr[p_current_page_input->row_num + 1],
-			1, 		/* Signal that exactly one cell was emptied */
-			&wait_code);
-		if (FALSE == ret_val)
-		{
-			printf("Error when releasing\n");
-			return ERROR_CODE;
-		}
+		printf("Error when releasing\n");
+		return ERROR_CODE;
 	}
 	if (update_table)
 	{
