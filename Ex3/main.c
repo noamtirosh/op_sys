@@ -37,12 +37,12 @@ typedef struct thread_input_s {
 
 typedef struct lru_cell_s {
 	struct lru_cell_s* next;
-	int frame_index;
+	int index;
 }lru_cell_t;
 
 static HANDLE g_out_put_file;
 static HANDLE g_page_table_mutex_handle = NULL;
-static HANDLE g_frames_to_evict_semapore = NULL;
+static HANDLE g_main_semapore = NULL;
 static HANDLE g_thread_order_semapore = NULL;
 HANDLE* thread_semaphore_arr = NULL;
 int n_frame_in_table = 0;
@@ -52,6 +52,8 @@ char* pg_full_text;
 int num_of_frames = 0;
 int num_of_pages = 0;
 lru_cell_t *lru_head =NULL;
+lru_cell_t* thread_lru_head = NULL;
+int avilable_frame = 0;
 int n_rows = 0;
 
 
@@ -128,10 +130,10 @@ DWORD run_pages()
 	row_obj_t next_row_input;
 	char* next_line = NULL;
 	int current_row_ind = 0;
-	g_frames_to_evict_semapore = CreateSemaphore(
+	g_main_semapore  = CreateSemaphore(
 		NULL,	/* Default security attributes */
-		0,		/* Initial Count - all slots are empty */
-		num_of_frames,		/* Maximum Count */
+		0,		/* Initial Count - */
+		1,		/* Maximum Count */
 		NULL); /* un-named */
 	g_page_table_mutex_handle  = CreateMutex(
 			NULL,	/* default security attributes */
@@ -167,7 +169,7 @@ DWORD run_pages()
 	}
 
 	next_line = get_next_line(pg_full_text, &next_row_input);
-	while (current_row_ind != n_rows)
+	while (current_row_ind != n_rows || NULL != thread_lru_head)
 	{
 		//create new thread
 		if (next_row_input.start_time == current_time)
@@ -214,7 +216,7 @@ DWORD run_pages()
 					printf("Error when allocating memory for new lru_cell\n");
 					return ERROR_CODE;
 				}
-				lru_new_cell->frame_index = frame_ind;
+				lru_new_cell->index = frame_ind;
 				lru_new_cell->next = NULL;
 				if (NULL == lru_head)
 				{
@@ -223,25 +225,47 @@ DWORD run_pages()
 				else
 				{
 					lru_cell_t* temp_cell = lru_head;
-					while (NULL != temp_cell)
+					while (NULL != temp_cell->next)
 					{
 						temp_cell = temp_cell->next;
 					}
 					temp_cell->next = lru_new_cell;
 				}
-				release_res = ReleaseSemaphore(
-					g_frames_to_evict_semapore,
-					1, 		/* Signal that exactly one cell was emptied */
-					&previous_count);
-				if (release_res == FALSE)
-				{
-					//TODO print error
-				}
-				
+				avilable_frame++;
 
 				//TODO check taht in first time not entere condition if semapore if full
 			}
 
+		}
+		
+		//cheack if there is a thread waiting
+		while (NULL != thread_lru_head && avilable_frame > 0)
+		{
+			release_res = ReleaseSemaphore(
+				thread_semaphore_arr[thread_lru_head->index],
+				1, 		/* Signal that exactly one cell was emptied */
+				&previous_count);
+			if (release_res == FALSE)
+			{
+				//TODO print error
+			}
+			lru_cell_t* temp_cell = thread_lru_head->next;
+			free(thread_lru_head);
+			thread_lru_head = temp_cell;
+			avilable_frame--;
+			ret_val = ReleaseMutex(g_page_table_mutex_handle);
+			wait_code = WaitForSingleObject(g_main_semapore, INFINITE);
+			if (WAIT_OBJECT_0 != wait_code)
+			{
+				printf("Error when waiting for mutex\n");
+				return ERROR_CODE;
+			}
+			wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
+			if (WAIT_OBJECT_0 != wait_code)
+			{
+				printf("Error when waiting for mutex\n");
+				return ERROR_CODE;
+			}
 		}
 		ret_val = ReleaseMutex(g_page_table_mutex_handle);
 		if (FALSE == ret_val)
@@ -278,7 +302,7 @@ DWORD run_pages()
 		print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE);
 	}
 
-	CloseHandle(g_frames_to_evict_semapore);
+	CloseHandle(g_main_semapore);
 }
 int count_chars(const char* string, char ch)
 {
@@ -329,6 +353,12 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	wait_code = WaitForSingleObject(thread_semaphore_arr[p_current_page_input->row_num], INFINITE);
 	if (WAIT_OBJECT_0 != wait_code)
 	{
+		printf("Error when waiting for thread semaphore\n");
+		return ERROR_CODE;
+	}
+	wait_code = WaitForSingleObject(g_page_table_mutex_handle, INFINITE);
+	if (WAIT_OBJECT_0 != wait_code)
+	{
 		printf("Error when waiting for mutex\n");
 		return ERROR_CODE;
 	}
@@ -361,6 +391,38 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		print_to_output_file(placement_time, page_ind, empty_frame_ind, PLACEMENT_CODE);
 		update_table = 1;
 	}
+	if (!update_table)
+	{
+		//add thread to thread lru 
+		lru_cell_t* new_thread_lru_cell = (lru_cell_t*)malloc(sizeof(lru_cell_t));
+		if (NULL == new_thread_lru_cell)
+		{
+			printf("Error when allocating memory for new thread lru_cell\n");
+			return ERROR_CODE;
+		}
+		new_thread_lru_cell->index = p_current_page_input->row_num;
+		new_thread_lru_cell->next = NULL;
+		//put in the end of the thread cain
+		if (NULL == thread_lru_head)
+		{
+			thread_lru_head = new_thread_lru_cell;
+		}
+		else
+		{
+			lru_cell_t* temp_cell = thread_lru_head;
+			while (NULL != temp_cell->next)
+			{
+				temp_cell = temp_cell->next;
+			}
+			temp_cell->next = new_thread_lru_cell;
+		}
+	}
+	ret_val = ReleaseMutex(g_page_table_mutex_handle);
+	if (FALSE == ret_val)
+	{
+		printf("Error when releasing mutex\n");
+		return ERROR_CODE;
+	}
 	//release semaphore for next thred
 	if (p_current_page_input->row_num < n_rows - 1)
 	{
@@ -379,7 +441,7 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		return SUCCESS_CODE;
 	}
 	// we need to add the page to fram table - wait untill we can
-	wait_code = WaitForSingleObject(g_frames_to_evict_semapore, INFINITE);
+	wait_code = WaitForSingleObject(thread_semaphore_arr[p_current_page_input->row_num], INFINITE);
 	if (wait_code != WAIT_OBJECT_0)
 	{
 		printf("Error when waiting for mutex\n");
@@ -401,7 +463,7 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	//need to evicted frame and place the page
 	else
 	{
-		int frame_to_evict = lru_head->frame_index;
+		int frame_to_evict = lru_head->index;
 		int evict_time = max(pg_frame_table[frame_to_evict].end_time, placement_time);
 		int page_to_unvalid = pg_frame_table[frame_to_evict].page_number;
 		print_to_output_file(evict_time, page_to_unvalid, frame_to_evict, EVICT_CODE);
@@ -418,6 +480,15 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		lru_cell_t* temp_lru_head = lru_head->next;
 		free(lru_head);
 		lru_head = temp_lru_head;
+	}
+	ret_val = ReleaseSemaphore(
+		g_main_semapore,
+		1, 		/* Signal that exactly one cell was emptied */
+		&wait_code);
+	if (FALSE == ret_val)
+	{
+		printf("Error when releasing\n");
+		return ERROR_CODE;
 	}
 	ret_val = ReleaseMutex(g_page_table_mutex_handle);
 	if (FALSE == ret_val)
