@@ -35,82 +35,94 @@ typedef struct thread_input_s {
 	int row_num;
 }thread_input_t;
 
-typedef struct lru_cell_s {
-	struct lru_cell_s* next;
+typedef struct queue_cell_s {
+	struct queue_cell_s* p_next;
 	int index;
-}lru_cell_t;
+}queue_cell_t;
 
-static HANDLE g_out_put_file;
+typedef struct resource_queue_cell_s {
+	struct resource_queue_cell_s* p_next;
+	int type;
+	void* pointer;
+}resource_queue_cell_t;
+
+
 static HANDLE g_page_table_mutex_handle = NULL;
 static HANDLE g_main_semapore = NULL;
 static HANDLE g_thread_order_semapore = NULL;
-HANDLE* thread_semaphore_arr = NULL;
-int n_frame_in_table = 0;
-page_obj_t *pg_page_table;
-frame_obj_t *pg_frame_table;
-char* pg_full_text;
-int num_of_frames = 0;
-int num_of_pages = 0;
-lru_cell_t *lru_head =NULL;
-lru_cell_t* thread_lru_head = NULL;
-int avilable_frame = 0;
-int n_rows = 0;
+static HANDLE* thread_semaphore_arr = NULL;
+static page_obj_t *pg_page_table = NULL;
+static frame_obj_t *pg_frame_table = NULL;
+static char* pg_full_text;
+static int g_num_of_frames = 0;
+static int g_num_of_pages = 0;
+static queue_cell_t *pg_frame_queue_head =NULL;
+static queue_cell_t* pg_thread_queue_head = NULL;
+static resource_queue_cell_t* resource_head = NULL;
+static int g_avilable_frame = 0;
+static int g_num_rows = 0;
 
 
 
 DWORD get_file_len(LPCSTR p_file_name);
 DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
+int print_to_output_file(int time, int virtual_page_num, int physical_frame_num, char eviction_placement);
+
 int count_chars(const char* string, char ch);
-static DWORD WINAPI page_thread(LPVOID lpParam);
+static DWORD WINAPI page_thread(LPVOID lpParam); 
 char* get_next_line(char* p_line, row_obj_t* next_line_params);
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine, LPVOID p_thread_parameters, LPDWORD p_thread_id);
 void initial_tables();
+void remove_frame_from_queue(int frame_num);
+void free_resource(queue_cell_t* p_queue_head_1, queue_cell_t* p_queue_head_2);
+void* get_resource(size_t size, const char* error_msg, int* return_valu);
 int main(int argc, char* argv[])
 {
-
+	int memory_aloc_check = 0;
 	if (argc != NUM_OF_INPUTS + 1)
 	{
 		printf("ERROR: Not enough input arguments\n");
 		return ERROR_CODE;
 	}
 	const char* p_input_file_path = argv[INPUT_FILE_PATH_IND];//the path to open the file
-	int frame_number;//the number of frames
-	num_of_pages = pow(2,(atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM));
-	num_of_frames = pow(2,(atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM));
+	g_num_of_pages = (int)pow(2,((double)atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM));
+	g_num_of_frames = (int)pow(2,((double)atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM));
 	//alocate memory for page table and frame table
-	pg_page_table = (page_obj_t*)malloc(num_of_pages * sizeof(page_obj_t));
-	pg_frame_table = (frame_obj_t*)malloc(num_of_frames * sizeof(frame_obj_t));
-	if (NULL == pg_page_table)
+	pg_page_table = (page_obj_t*)get_resource(g_num_of_pages * sizeof(page_obj_t), "Error when allocating memory for page_table\n", &memory_aloc_check);
+	if (ERROR_CODE == memory_aloc_check)
 	{
-		printf("Error when allocating memory for page_table\n");
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
 		return ERROR_CODE;
 	}
-	if (NULL == pg_frame_table)
+	pg_frame_table = (frame_obj_t*)get_resource(g_num_of_frames * sizeof(frame_obj_t), "Error when allocating memory for farme_table\n", &memory_aloc_check);
+	if (ERROR_CODE == memory_aloc_check)
 	{
-		printf("Error when allocating memory for farme_table\n");
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
 		return ERROR_CODE;
 	}
 	initial_tables();
 	//read input file
 	int length_of_text = get_file_len(p_input_file_path);
 	// read all file at once TODO change to line by line
-	pg_full_text = (char*)malloc((length_of_text + 1) * sizeof(char));
-	if (NULL == pg_full_text)
+	pg_full_text = (char*)get_resource((length_of_text + 1) * sizeof(char), "Error when allocating memory for input file text\n", &memory_aloc_check);
+	if (ERROR_CODE == memory_aloc_check)
 	{
-		printf("Error when allocating memory for input file text\n");
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
 		return ERROR_CODE;
 	}
 	DWORD num_bytes_readen = read_from_file(p_input_file_path, 0, pg_full_text, length_of_text);
 	if (num_bytes_readen != length_of_text)
 	{
 		printf("Error when try to read input file %s\n", p_input_file_path);
+		//TODO relaes
 		return ERROR_CODE;
 	}
 	pg_full_text[length_of_text] = '\0';
-	n_rows = count_chars(pg_full_text, '\n');
+	g_num_rows = count_chars(pg_full_text, '\n');
 	if ('\n' != pg_full_text[length_of_text - 1])
 	{
-		n_rows++;
+		g_num_rows++;
 	}
 	//for each line alocate mem for page - page array
 	run_pages();
@@ -126,61 +138,60 @@ DWORD run_pages()
 	LONG previous_count;
 	DWORD wait_code;
 	BOOL ret_val;
+	int resource_aloc_check = 0;
 	int current_time = 0;
 	row_obj_t next_row_input;
-	char* next_line = NULL;
+	char* p_next_line = NULL;
 	int current_row_ind = 0;
 	g_main_semapore  = CreateSemaphore(
 		NULL,	/* Default security attributes */
 		0,		/* Initial Count - */
 		1,		/* Maximum Count */
-		NULL); /* un-named */
+		NULL); /* un-named */  //TODO relaes
 	g_page_table_mutex_handle  = CreateMutex(
 			NULL,	/* default security attributes */
 			FALSE,	/* initially not owned */
-			NULL);	/* unnamed mutex */
+			NULL);	/* unnamed mutex */  //TODO relaes
 	//alocate memory for each thread for each row
-	HANDLE *thread_handle_arr = (HANDLE*)malloc((n_rows) * sizeof(HANDLE));
-	thread_semaphore_arr = (HANDLE*)malloc((n_rows) * sizeof(HANDLE));
-	for (int ind = 0; ind < n_rows; ind++)
+	HANDLE *p_thread_handle_arr = (HANDLE*)get_resource((g_num_rows) * sizeof(HANDLE), "Error when allocating memory for thread_array\n", &resource_aloc_check);
+	if (ERROR_CODE == resource_aloc_check)
+	{
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
+		return ERROR_CODE;
+	}
+	thread_input_t* p_thread_input_arr = (thread_input_t*)get_resource((g_num_rows) * sizeof(thread_input_t), "Error when allocating memory for thread_input_array\n", &resource_aloc_check);
+	if (ERROR_CODE == resource_aloc_check)
+	{
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
+		return ERROR_CODE;
+	}
+	thread_semaphore_arr = (HANDLE*)get_resource((g_num_rows) * sizeof(HANDLE), "Error when allocating memory for semaphore_arr\n", &resource_aloc_check);
+	if (ERROR_CODE == resource_aloc_check)
+	{
+		free_resource(pg_frame_queue_head, pg_thread_queue_head);
+		return ERROR_CODE;
+	}
+	for (int ind = 0; ind < g_num_rows; ind++)
 	{
 		thread_semaphore_arr[ind] = CreateSemaphore(
 			NULL,	/* Default security attributes */
 			0,		/* Initial Count - */
 			1,		/* Maximum Count */
-			NULL); /* un-named */
+			NULL); /* un-named */ //TODO relaes
 	}
-	//relase first semaphore
-	release_res = ReleaseSemaphore(
-		thread_semaphore_arr[0],
-		1, 		/* Signal that exactly one cell was emptied */
-		&previous_count);
-
-	if (NULL == thread_handle_arr)
-	{
-		printf("Error when allocating memory for thread_array\n");
-		return ERROR_CODE;
-	}
-	thread_input_t* thread_input_arr = (thread_input_t*)malloc((n_rows) * sizeof(thread_input_t));
-	if (NULL == thread_input_arr)
-	{
-		printf("Error when allocating memory for thread_input_array\n");
-		return ERROR_CODE;
-	}
-
-	next_line = get_next_line(pg_full_text, &next_row_input);
-	while (current_row_ind != n_rows || NULL != thread_lru_head)
+	p_next_line = get_next_line(pg_full_text, &next_row_input);
+	while (current_row_ind != g_num_rows || NULL != pg_thread_queue_head)
 	{
 		//create new thread
 		if (next_row_input.start_time == current_time)
 		{
 			DWORD thread_id;
 			//init data in thread_input
-			thread_input_arr[current_row_ind].row_num = current_row_ind;
-			thread_input_arr[current_row_ind].call_time = current_time; 
-			thread_input_arr[current_row_ind].work_time = next_row_input.work_time;
-			thread_input_arr[current_row_ind].virtual_page_num = next_row_input.physical_frame_num;
-			thread_handle_arr[current_row_ind] = CreateThreadSimple(page_thread, thread_input_arr + current_row_ind, &thread_id);
+			p_thread_input_arr[current_row_ind].row_num = current_row_ind;
+			p_thread_input_arr[current_row_ind].call_time = current_time; 
+			p_thread_input_arr[current_row_ind].work_time = next_row_input.work_time;
+			p_thread_input_arr[current_row_ind].virtual_page_num = next_row_input.physical_frame_num;
+			p_thread_handle_arr[current_row_ind] = CreateThreadSimple(page_thread, p_thread_input_arr + current_row_ind, &thread_id);
 			wait_code = WaitForSingleObject(g_main_semapore, INFINITE);
 			if (WAIT_OBJECT_0 != wait_code)
 			{
@@ -188,9 +199,9 @@ DWORD run_pages()
 				return ERROR_CODE;
 			}
 			//move to next row
-			if (!strlen(next_line))
+			if (!strlen(p_next_line))
 			{
-				if (n_rows - 1 == current_row_ind)
+				if (g_num_rows - 1 == current_row_ind)
 				{
 					current_row_ind++;
 				}
@@ -198,7 +209,7 @@ DWORD run_pages()
 			}
 			else
 			{
-				next_line = get_next_line(next_line, &next_row_input);
+				p_next_line = get_next_line(p_next_line, &next_row_input);
 				current_row_ind++;
 			}
 		}
@@ -210,34 +221,34 @@ DWORD run_pages()
 			return ERROR_CODE;
 		}
 		//check_if_any_frame_end
-		for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+		for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 		{
 			if (pg_frame_table[frame_ind].end_time == current_time) // TODO need to start frames end time to be -1
 			{
 
-				//update lru //TODO add mutex
-				lru_cell_t* lru_new_cell = (lru_cell_t*)malloc(sizeof(lru_cell_t));//TODO add malloc check
-				if (NULL == lru_new_cell)
+				//update queue 
+				queue_cell_t* p_queue_new_cell = (queue_cell_t*)malloc(sizeof(queue_cell_t));//TODO add malloc check
+				if (NULL == p_queue_new_cell)
 				{
-					printf("Error when allocating memory for new lru_cell\n");
+					printf("Error when allocating memory for new queue_cell\n");
 					return ERROR_CODE;
 				}
-				lru_new_cell->index = frame_ind;
-				lru_new_cell->next = NULL;
-				if (NULL == lru_head)
+				p_queue_new_cell->index = frame_ind;
+				p_queue_new_cell->p_next = NULL;
+				if (NULL == pg_frame_queue_head)
 				{
-					lru_head = lru_new_cell;
+					pg_frame_queue_head = p_queue_new_cell;
 				}
 				else
 				{
-					lru_cell_t* temp_cell = lru_head;
-					while (NULL != temp_cell->next)
+					queue_cell_t* temp_cell = pg_frame_queue_head;
+					while (NULL != temp_cell->p_next)
 					{
-						temp_cell = temp_cell->next;
+						temp_cell = temp_cell->p_next;
 					}
-					temp_cell->next = lru_new_cell;
+					temp_cell->p_next = p_queue_new_cell;
 				}
-				avilable_frame++;
+				g_avilable_frame++;
 
 				//TODO check taht in first time not entere condition if semapore if full
 			}
@@ -245,20 +256,21 @@ DWORD run_pages()
 		}
 		
 		//cheack if there is a thread waiting
-		while (NULL != thread_lru_head && avilable_frame > 0)
+		while (NULL != pg_thread_queue_head && g_avilable_frame > 0)
 		{
 			release_res = ReleaseSemaphore(
-				thread_semaphore_arr[thread_lru_head->index],
+				thread_semaphore_arr[pg_thread_queue_head->index],
 				1, 		/* Signal that exactly one cell was emptied */
 				&previous_count);
 			if (release_res == FALSE)
 			{
-				//TODO print error
+				printf("Error when realsing the thread semaphore\n");
+				//TODO free
 			}
-			lru_cell_t* temp_cell = thread_lru_head->next;
-			free(thread_lru_head);
-			thread_lru_head = temp_cell;
-			avilable_frame--;
+			queue_cell_t* p_temp_cell = pg_thread_queue_head->p_next;
+			free(pg_thread_queue_head);
+			pg_thread_queue_head = p_temp_cell;
+			g_avilable_frame--;
 			ret_val = ReleaseMutex(g_page_table_mutex_handle);
 			wait_code = WaitForSingleObject(g_main_semapore, INFINITE);
 			if (WAIT_OBJECT_0 != wait_code)
@@ -286,8 +298,8 @@ DWORD run_pages()
 	
 	//wait for pages in frams to end
 	DWORD multi_wait_code;
-	multi_wait_code = WaitForMultipleObjects(n_rows,// num of objects to wait for
-		thread_handle_arr, //array of handels to wait for
+	multi_wait_code = WaitForMultipleObjects(g_num_rows,// num of objects to wait for
+		p_thread_handle_arr, //array of handels to wait for
 		TRUE, // wait until all of the objects became signaled
 		INFINITE // no time out
 	);
@@ -298,14 +310,17 @@ DWORD run_pages()
 	}
 	//find last end_time
 	int last_end_time = 0;
-	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 	{
 		last_end_time = max(pg_frame_table[frame_ind].end_time, last_end_time);
 	}
 	//print all the end time in frame tabel
-	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
-	{
-		print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE);
+	for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
+	{ 
+		if (ERROR_CODE == print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE))
+		{
+			//TODO add error and relaes
+		}
 	}
 
 	CloseHandle(g_main_semapore);
@@ -326,7 +341,7 @@ int count_chars(const char* string, char ch)
 	return count;
 }
 
-char* get_next_line(char* p_line, row_obj_t *next_line_params)
+char* get_next_line(char* p_line, row_obj_t *p_next_line_params)
 {
 	char seprete[] = "\n";
 	char* new_line = NULL;
@@ -339,9 +354,9 @@ char* get_next_line(char* p_line, row_obj_t *next_line_params)
 		input_param = strtok_s(new_line, " ", &new_line);
 		input_arr[param_ind] = atoi(input_param);
 	}
-	next_line_params->start_time = input_arr[0];//the start time
-	next_line_params->physical_frame_num = input_arr[1] / PAGE_SIZE;//the number of page that corseponds to the adress
-	next_line_params->work_time = input_arr[2];//the time the page works
+	p_next_line_params->start_time = input_arr[0];//the start time
+	p_next_line_params->physical_frame_num = input_arr[1] / PAGE_SIZE;//the number of page that corseponds to the adress
+	p_next_line_params->work_time = input_arr[2];//the time the page works
 	return next_line;
 };
 
@@ -373,6 +388,8 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		pg_page_table[page_ind].end_time = new_end_of_use;
 		//update end_of_use in frame table
 		pg_frame_table[pg_page_table[page_ind].frame_number].end_time = new_end_of_use;
+		//if in queue remove it
+		remove_frame_from_queue(pg_page_table[page_ind].frame_number);
 		// no need to print
 		update_table = 1;
 	}
@@ -393,28 +410,28 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	}
 	if (!update_table)
 	{
-		//add thread to thread lru 
-		lru_cell_t* new_thread_lru_cell = (lru_cell_t*)malloc(sizeof(lru_cell_t));
-		if (NULL == new_thread_lru_cell)
+		//add thread to thread queue 
+		queue_cell_t* p_new_thread_queue_cell = (queue_cell_t*)malloc(sizeof(queue_cell_t));
+		if (NULL == p_new_thread_queue_cell)
 		{
-			printf("Error when allocating memory for new thread lru_cell\n");
-			return ERROR_CODE;
+			printf("Error when allocating memory for new thread queue_cell\n");
+			return ERROR_CODE; // TODO relaes?
 		}
-		new_thread_lru_cell->index = p_current_page_input->row_num;
-		new_thread_lru_cell->next = NULL;
+		p_new_thread_queue_cell->index = p_current_page_input->row_num;
+		p_new_thread_queue_cell->p_next = NULL;
 		//put in the end of the thread cain
-		if (NULL == thread_lru_head)
+		if (NULL == pg_thread_queue_head)
 		{
-			thread_lru_head = new_thread_lru_cell;
+			pg_thread_queue_head = p_new_thread_queue_cell;
 		}
 		else
 		{
-			lru_cell_t* temp_cell = thread_lru_head;
-			while (NULL != temp_cell->next)
+			queue_cell_t* p_temp_cell = pg_thread_queue_head;
+			while (NULL != p_temp_cell->p_next)
 			{
-				temp_cell = temp_cell->next;
+				p_temp_cell = p_temp_cell->p_next;
 			}
-			temp_cell->next = new_thread_lru_cell;
+			p_temp_cell->p_next = p_new_thread_queue_cell;
 		}
 	}
 	ret_val = ReleaseMutex(g_page_table_mutex_handle);
@@ -456,11 +473,13 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		//update frame tabel 
 		pg_frame_table[pg_page_table[page_ind].frame_number].end_time = new_end_of_time;
 		//no need to print
+		//if in queue remove it
+		remove_frame_from_queue(pg_page_table[page_ind].frame_number);
 	}
 	//need to evicted frame and place the page
 	else
 	{
-		int frame_to_evict = lru_head->index;
+		int frame_to_evict = pg_frame_queue_head->index;
 		int evict_time = max(pg_frame_table[frame_to_evict].end_time, placement_time);
 		int page_to_unvalid = pg_frame_table[frame_to_evict].page_number;
 		print_to_output_file(evict_time, page_to_unvalid, frame_to_evict, EVICT_CODE);
@@ -473,10 +492,10 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 		pg_page_table[page_ind].valid = VALID;
 		pg_page_table[page_ind].frame_number = frame_to_evict;
 		print_to_output_file(evict_time, page_ind, frame_to_evict, PLACEMENT_CODE);
-		//remove frame from lru
-		lru_cell_t* temp_lru_head = lru_head->next;
-		free(lru_head);
-		lru_head = temp_lru_head;
+		//remove frame from queue
+		queue_cell_t* p_temp_queue_head = pg_frame_queue_head->p_next;
+		free(pg_frame_queue_head);
+		pg_frame_queue_head = p_temp_queue_head;
 	}
 	ret_val = ReleaseSemaphore(
 		g_main_semapore,
@@ -495,20 +514,25 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	}
 	return SUCCESS_CODE;
 }
-DWORD print_to_output_file(int time,int virtual_page_num ,int physical_frame_num, char eviction_placement)
+int print_to_output_file(int time,int virtual_page_num ,int physical_frame_num, char eviction_placement)
 {
 	DWORD num_char_written = 0;
 	int write_buffer_len = floor(max(log10(time),0)) +1+ floor(max(log10(virtual_page_num),0)) +1+ floor(max(log10(physical_frame_num),0))+1 + 1 + 6; // time+virtual_page_num+physical_frame_num+eviction_placement+"   \r\n"
-	char* write_buffer = (char*)malloc(write_buffer_len * sizeof(char));
+	char* p_write_buffer = (char*)malloc(write_buffer_len * sizeof(char));
+	if (NULL == p_write_buffer)
+	{
+		printf("Error when allocate memory for buffer to write to output\n");
+		return ERROR_CODE;//TODO add print	}
+	}
 	//TODO check maloc
-	sprintf_s(write_buffer, write_buffer_len, "%d %d %d %c\r\n", time, virtual_page_num, physical_frame_num, eviction_placement);
-	//write_buffer[write_buffer_len] = '\0';
-	num_char_written = write_to_file(OUTPUT_PATH, write_buffer, write_buffer_len-1);
-	free(write_buffer);
+	sprintf_s(p_write_buffer, write_buffer_len, "%d %d %d %c\r\n", time, virtual_page_num, physical_frame_num, eviction_placement);
+	num_char_written = write_to_file(OUTPUT_PATH, p_write_buffer, write_buffer_len-1);
+	free(p_write_buffer);
 	if (num_char_written == write_buffer_len-1)
 	{
 		return SUCCESS_CODE;
 	}
+	printf("Error when writing to output text\n");
 	return ERROR_CODE;//TODO add print
 }
 
@@ -687,45 +711,11 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 	return thread_handle;
 }
 
-int get_lru_len(lru_cell_t* head_point)
-{
-	int len = 0;
-	lru_cell_t* temp_cell = head_point;
-	while (NULL != temp_cell)
-	{
-		temp_cell = temp_cell->next;
-		len++;
-	}
-	return len;
-}
-
-void free_memory(int stage)
-{
-	lru_cell_t* temp_cell = NULL;
-	switch (stage)
-	{
-	case 1:
-		free(pg_page_table);
-		free(pg_frame_table);
-	case 2:
-		free(pg_full_text);
-	default:
-		//free lru cain
-		temp_cell = lru_head;
-		while (NULL != temp_cell)
-		{
-			temp_cell = temp_cell->next;
-			free(lru_head);
-			lru_head = temp_cell;
-		}
-		break;
-	}
-}
 
 int get_empty_frame_ind()
 {
 	//TODO need to be safe with mutex
-	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 	{
 		if (pg_frame_table[frame_ind].end_time == NOT_USE_FRAME_END_TIME) // TODO need to start frames end time to be -1
 		{
@@ -737,12 +727,100 @@ int get_empty_frame_ind()
 
 void initial_tables()
 {
-	for (int frame_ind = 0; frame_ind < num_of_frames; frame_ind++)
+	for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 	{
 		pg_frame_table[frame_ind].end_time = NOT_USE_FRAME_END_TIME;
 	}
-	for (int page_ind = 0; page_ind < num_of_pages; page_ind++)
+	for (int page_ind = 0; page_ind < g_num_of_pages; page_ind++)
 	{
 		pg_page_table[page_ind].valid = NOT_VALID;
+	}
+}
+
+void remove_frame_from_queue(int frame_num)
+{
+	//if in queue remove it
+	if (NULL != pg_frame_queue_head)
+	{
+		if (pg_frame_queue_head->index == frame_num)
+		{
+			queue_cell_t* p_temp_cell = pg_frame_queue_head;
+			pg_frame_queue_head = pg_frame_queue_head->p_next;
+			free(p_temp_cell);
+			g_avilable_frame--;
+
+		}
+		else
+		{
+			queue_cell_t* p_perv_cell = pg_frame_queue_head;
+			queue_cell_t* p_itr_cell = pg_frame_queue_head->p_next;
+			while (NULL != p_itr_cell)
+			{
+				if (p_itr_cell->index == frame_num)
+				{
+					p_perv_cell->p_next = p_itr_cell->p_next;
+					g_avilable_frame--;
+					free(p_itr_cell);
+					break;
+				}
+				p_perv_cell = p_itr_cell;
+				p_itr_cell = p_itr_cell->p_next;
+			}
+		}
+	}
+	
+}
+
+void* get_resource(size_t size, const char* error_msg, int* return_valu)
+{
+	void* p_resource = malloc(size);
+	if (NULL == p_resource)
+	{
+		printf(error_msg);
+		*return_valu = ERROR_RET;
+	}
+	else
+	{
+		resource_queue_cell_t* new_resource_cell = (resource_queue_cell_t*)malloc(sizeof(resource_queue_cell_t));
+		if (NULL == new_resource_cell)
+		{
+			free(p_resource);
+			p_resource = NULL;
+			printf(error_msg);
+			*return_valu = ERROR_RET;
+		}
+		else
+		{
+			new_resource_cell->pointer = p_resource;
+			new_resource_cell->p_next = resource_head;
+			resource_head = new_resource_cell;
+			*return_valu = SUCCESS_CODE;
+		}
+	}
+	return p_resource;
+}
+
+void free_resource(queue_cell_t *p_queue_head_1, queue_cell_t *p_queue_head_2)
+{
+	resource_queue_cell_t* temp_resource_cell = NULL;
+	while (NULL != resource_head)
+	{
+		temp_resource_cell = resource_head;
+		resource_head = resource_head->p_next;
+		free(temp_resource_cell->pointer);
+		free(temp_resource_cell);
+	}
+	queue_cell_t* temp_queue_cell = NULL;
+	while (NULL != p_queue_head_1)
+	{
+		temp_queue_cell = p_queue_head_1;
+		p_queue_head_1 = p_queue_head_1->p_next;
+		free(p_queue_head_1);
+	}
+	while (NULL != p_queue_head_2)
+	{
+		temp_queue_cell = p_queue_head_2;
+		p_queue_head_2 = p_queue_head_2->p_next;
+		free(p_queue_head_2);
 	}
 }
