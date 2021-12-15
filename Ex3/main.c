@@ -21,7 +21,7 @@ typedef struct row_obj_s {
 typedef struct page_obj_s {
 	int frame_number;
 	int valid;
-	int end_time;
+	int end_of_use;
 } page_obj_t;
 
 typedef struct frame_obj_s {
@@ -43,7 +43,7 @@ typedef struct queue_cell_s {
 
 typedef struct mem_queue_cell_s {
 	struct mem_queue_cell_s* p_next;
-	void* pointer;
+	void* p_pointer;
 }mem_queue_cell_t;
 
 
@@ -59,7 +59,7 @@ static int g_num_of_frames = 0;
 static int g_num_of_pages = 0;
 static queue_cell_t *pg_frame_queue_head =NULL;
 static queue_cell_t* pg_thread_queue_head = NULL;
-static mem_queue_cell_t* resource_head = NULL;
+static mem_queue_cell_t* pg_resource_head = NULL;
 static int g_avilable_frame = 0;
 static int g_num_rows = 0;
 const char *pg_output_file_path = NULL;
@@ -67,7 +67,7 @@ const char *pg_output_file_path = NULL;
 
 
 //read input functions
-int count_chars(const char* string, char ch);
+int count_chars(const char* p_string, char ch);
 char* get_next_line(char* p_line, row_obj_t* p_next_line_params);
 
 // table functions
@@ -92,7 +92,7 @@ int update_empty_frame(int page_ind, int placement_time, int page_work_time);
 int add_to_thread_queue(int thread_ind);
 
 //memory mange functions
-void *get_mem_resource(size_t size, const char* error_msg, int* return_valu);
+void* get_mem_resource(size_t size, const char* error_msg, int* p_return_value);
 void free_resource(queue_cell_t* p_queue_head_1, queue_cell_t* p_queue_head_2);
 int close_handels();
 //file functions
@@ -108,6 +108,16 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine, LPVOID 
 
 int main(int argc, char* argv[])
 {
+	//documantion noam
+	/// <summary>
+	/// The program gets the number of frames and virtual memory pages and build a 
+	/// the name of the file 
+	/// lookup table for virtual pages that will tell us witch pages are open with witch frames and 
+	/// the work time of the memory and will tell us when we start using and when we stoped using the frame
+	/// </summary>
+	/// <param name="argc">contains the number of argumants in our case 3</param>
+	/// <param name="argv"> the number of physical_bits and the number of virtual bits the name of the input file </param>
+	/// <returns></returns>
 
 	if (argc != NUM_OF_INPUTS + 1)
 	{
@@ -818,12 +828,12 @@ int add_to_frame_queue(int frame_ind)
 	else
 	{
 		//
-		queue_cell_t* temp_cell = pg_frame_queue_head;
-		while (NULL != temp_cell->p_next)
+		queue_cell_t* p_temp_cell = pg_frame_queue_head;
+		while (NULL != p_temp_cell->p_next)
 		{
-			temp_cell = temp_cell->p_next;
+			p_temp_cell = p_temp_cell->p_next;
 		}
-		temp_cell->p_next = p_queue_new_cell;
+		p_temp_cell->p_next = p_queue_new_cell;
 	}
 	g_avilable_frame++;
 	return SUCCESS_CODE;
@@ -884,10 +894,13 @@ int print_remains_frames()
 	//print all the end time in frame tabel
 	for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 	{
-		if (ERROR_CODE == print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE))
+		if (-1 != pg_frame_table[frame_ind].end_time)
 		{
-			return ERROR_CODE;
-			
+			if (ERROR_CODE == print_to_output_file(last_end_time, pg_frame_table[frame_ind].page_number, frame_ind, EVICT_CODE))
+			{
+				return ERROR_CODE;
+
+			}
 		}
 	}
 	return SUCCESS_CODE;
@@ -906,7 +919,7 @@ void evicte_and_place(int placement_time,int work_time, int page_ind)
 	pg_frame_table[frame_to_evict].page_number = page_ind;
 	//update page tabel
 	pg_page_table[page_to_unvalid].valid = NOT_VALID;
-	pg_page_table[page_ind].end_time = evict_time + work_time;
+	pg_page_table[page_ind].end_of_use = evict_time + work_time;
 	pg_page_table[page_ind].valid = VALID;
 	pg_page_table[page_ind].frame_number = frame_to_evict;
 	print_to_output_file(evict_time, page_ind, frame_to_evict, PLACEMENT_CODE);
@@ -919,8 +932,8 @@ void evicte_and_place(int placement_time,int work_time, int page_ind)
 void update_frame_in_table(int page_ind, int placement_time,int page_work_time)
 {
 	//update end_of_use in page table TODO change name to end_of_use
-	int new_end_of_use = max(pg_page_table[page_ind].end_time, placement_time + page_work_time);
-	pg_page_table[page_ind].end_time = new_end_of_use;
+	int new_end_of_use = max(pg_page_table[page_ind].end_of_use, placement_time + page_work_time);
+	pg_page_table[page_ind].end_of_use = new_end_of_use;
 	//update end_of_use in frame table
 	pg_frame_table[pg_page_table[page_ind].frame_number].end_time = new_end_of_use;
 	//if in queue remove it
@@ -940,7 +953,7 @@ int update_empty_frame(int page_ind, int placement_time, int page_work_time)
 	pg_frame_table[empty_frame_ind].end_time = end_time;
 	pg_frame_table[empty_frame_ind].page_number = page_ind;
 	//update page tabel
-	pg_page_table[page_ind].end_time = end_time;
+	pg_page_table[page_ind].end_of_use = end_time;
 	pg_page_table[page_ind].valid = VALID;
 	pg_page_table[page_ind].frame_number = empty_frame_ind;
 	return print_to_output_file(placement_time, page_ind, empty_frame_ind, PLACEMENT_CODE);
@@ -976,13 +989,20 @@ int add_to_thread_queue(int thread_ind)
 
 //memory mange functions
 
-void* get_mem_resource(size_t size, const char* error_msg, int* return_valu)
+void* get_mem_resource(size_t size, const char* error_msg, int* p_return_value)
 {
+	/// <summary>
+	///  aloocated memory and add it to a linked list
+	/// </summary>
+	/// <param name="size">the size we will use for our alloction</param>
+	/// <param name="p_error_msg">if the alloction fail return this message </param>
+	/// <param name="p_return_valu">set the value of return_value to ERROR_CODE or SUCCESS_CODE </param>
+	/// <returns> pointer to the aloocated memory</returns>
 	void* p_resource = malloc(size);
 	if (NULL == p_resource)
 	{
 		printf(error_msg);
-		*return_valu = ERROR_CODE;
+		*p_return_value = ERROR_CODE;
 	}
 	else
 	{
@@ -992,14 +1012,14 @@ void* get_mem_resource(size_t size, const char* error_msg, int* return_valu)
 			printf("unable to alocate memory for mem_queue_cell_t struct\n ");
 			free(p_resource);
 			p_resource = NULL;
-			*return_valu = ERROR_CODE;
+			*p_return_value = ERROR_CODE;
 		}
 		else
 		{
-			new_resource_cell->pointer = p_resource;
-			new_resource_cell->p_next = resource_head;
-			resource_head = new_resource_cell;
-			*return_valu = SUCCESS_CODE;
+			new_resource_cell->p_pointer = p_resource;
+			new_resource_cell->p_next = pg_resource_head;
+			pg_resource_head = new_resource_cell;
+			*p_return_value = SUCCESS_CODE;
 		}
 	}
 	return p_resource;
@@ -1015,11 +1035,11 @@ void free_resource(queue_cell_t *p_queue_head_1, queue_cell_t *p_queue_head_2)
 	}
 	//free memory resource
 	mem_queue_cell_t* temp_resource_cell = NULL;
-	while (NULL != resource_head)
+	while (NULL != pg_resource_head)
 	{
-		temp_resource_cell = resource_head;
-		resource_head = resource_head->p_next;
-		free(temp_resource_cell->pointer);
+		temp_resource_cell = pg_resource_head;
+		pg_resource_head = pg_resource_head->p_next;
+		free(temp_resource_cell->p_pointer);
 		free(temp_resource_cell);
 	}
 	queue_cell_t* temp_queue_cell = NULL;
@@ -1040,6 +1060,10 @@ void free_resource(queue_cell_t *p_queue_head_1, queue_cell_t *p_queue_head_2)
 
 int close_handels()
 {
+	/// <summary>
+	/// this code will close all the handles and threads we used
+	/// </summary>
+	/// <returns></returns>
 	BOOL ret_val = TRUE;
 	DWORD exit_code;
 	DWORD thread_out_val = SUCCESS_CODE;
