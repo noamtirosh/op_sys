@@ -108,15 +108,14 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine, LPVOID 
 
 int main(int argc, char* argv[])
 {
-	//documantion noam
 	/// <summary>
-	/// The program gets the number of frames and virtual memory pages and build a 
-	/// the name of the file 
-	/// lookup table for virtual pages that will tell us witch pages are open with witch frames and 
-	/// the work time of the memory and will tell us when we start using and when we stoped using the frame
+	/// the number of bits in physical memory adress and the number of bits in  virtual adress and path to input file
+	/// we use the input file to simulate virtual page request,
+	/// the program build a lookup table for virtual pages that tell us witch pages are open with witch frames and
+	/// the work time of page and will tell us when we start using and when we stoped using the frame
 	/// </summary>
 	/// <param name="argc">contains the number of argumants in our case 3</param>
-	/// <param name="argv"> the number of physical_bits and the number of virtual bits the name of the input file </param>
+	/// <param name="argv"> the number of bits in physical memory adress and the number of bits in  virtual adress and path to input file </param>
 	/// <returns></returns>
 
 	if (argc != NUM_OF_INPUTS + 1)
@@ -128,7 +127,10 @@ int main(int argc, char* argv[])
 	pg_output_file_path = get_output_path(p_input_file_path);
 	g_num_of_pages = (int)pow(2,((double)atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM));
 	g_num_of_frames = (int)pow(2,((double)atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM));
-	create_tabels();
+	if (ERROR_CODE == create_tabels())
+	{
+		return ERROR_CODE;
+	}
 	initial_tables();
 	//read input file
 	int length_of_text = get_file_len(p_input_file_path);
@@ -140,7 +142,7 @@ int main(int argc, char* argv[])
 		free_resource(pg_frame_queue_head, pg_thread_queue_head);
 		return ERROR_CODE;
 	}
-	DWORD num_bytes_readen = read_from_file(p_input_file_path, 0, pg_full_text, length_of_text);
+	DWORD num_bytes_readen = read_from_file(p_input_file_path, 0, pg_full_text, length_of_text);//read the text from input file 
 	if (num_bytes_readen != length_of_text)
 	{
 		printf("Error when try to read input file %s\n", p_input_file_path);
@@ -171,7 +173,12 @@ int main(int argc, char* argv[])
 
 DWORD run_pages()
 {
-	
+	/// <summary>
+	/// this function run over the lines of the imput file
+	/// for each line it open athread to handle the request for virtual page 
+	/// build the table and prints the info to the output file
+	/// </summary>
+	/// <returns></returns>
 	DWORD wait_code;
 	BOOL ret_val;
 	int resource_aloc_check = 0;
@@ -199,6 +206,18 @@ DWORD run_pages()
 	while (current_row_ind != g_num_rows || NULL != pg_thread_queue_head)
 	{
 		//create new thread
+		if (next_row_input.start_time < current_time)
+		{
+			if (next_row_input.start_time == current_time - 1)
+			{
+				current_time--;
+			}
+			else
+			{
+				printf("the line in the input file are not in the right order\n");
+				return ERROR_CODE;
+			}
+		}
 		if (next_row_input.start_time == current_time)
 		{
 
