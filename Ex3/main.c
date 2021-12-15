@@ -210,7 +210,7 @@ DWORD run_pages()
 	while (current_row_ind != g_num_rows || NULL != pg_thread_queue_head)
 	{
 		//create new thread
-		if (next_row_input.start_time < current_time)
+		if (next_row_input.start_time < current_time && current_row_ind != g_num_rows)
 		{
 			if (next_row_input.start_time == current_time - 1)
 			{
@@ -433,6 +433,7 @@ static DWORD WINAPI page_thread(LPVOID lpParam)
 	else
 	{
 		evicte_and_place(placement_time, page_work_time, page_ind);
+		g_avilable_frame--;
 	}
 	ret_val = ReleaseSemaphore(
 		g_main_semapore,
@@ -906,7 +907,6 @@ int release_waiting_threads()
 		queue_cell_t* p_temp_cell = pg_thread_queue_head->p_next;
 		free(pg_thread_queue_head);
 		pg_thread_queue_head = p_temp_cell;
-		g_avilable_frame--;
 		ret_val = ReleaseMutex(g_page_table_mutex_handle);
 		if (FALSE == ret_val)
 		{
@@ -979,7 +979,7 @@ void evicte_and_place(int placement_time,int work_time, int page_ind)
 void update_frame_in_table(int page_ind, int placement_time,int page_work_time)
 {
 	//update end_of_use in page table TODO change name to end_of_use
-	int new_end_of_use = max(pg_page_table[page_ind].end_of_use, placement_time + page_work_time);
+	int new_end_of_use = max(pg_page_table[page_ind].end_of_use + page_work_time, placement_time + page_work_time);
 	pg_page_table[page_ind].end_of_use = new_end_of_use;
 	//update end_of_use in frame table
 	pg_frame_table[pg_page_table[page_ind].frame_number].end_time = new_end_of_use;
