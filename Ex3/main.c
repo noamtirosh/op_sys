@@ -2,7 +2,11 @@
 /*struct page_info
 * Authors – Noam Tirosh 314962945, Daniel Kogan 315786418
 * project : Ex3
-* Description: TODO add discription
+* Description: The code implements system to mange an Paging system for virtual memory,
+* the code will map pages to phisical frames and will mange the entry time of each page
+* according to the avilability of the frames the system have in the spsyfic moment in time
+* show us the time those frame begin to hold the page,the number of frame we used for the wonted
+* page and the total time the frame hold the page.
 */
 /////////////////////////////////////
 #include <stdio.h>
@@ -345,7 +349,12 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 
 static DWORD WINAPI page_thread(LPVOID lpParam)
 {
-	//the thread func input - 
+	/// <summary>
+	/// This function wait for a frame , if its not empty , evict it (from the page table) and then put the page data in table wite the frame index  
+	/// </summary>
+	/// <param name="lpParam">a pointer witch contains the info to the thread </param>
+	/// <returns></returns>
+	//the thread func input 
 	DWORD wait_code;
 	BOOL ret_val;
 	BOOL update_table = 0;
@@ -492,8 +501,14 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 	}
 	return h_file;
 }
+
 LPCSTR get_output_path(LPCSTR p_input_path)
 {
+	/// <summary>
+	/// given a input path, take its dir path and add a default output file name and return as a output path
+	/// </summary>
+	/// <param name="p_input_path"></param>
+	/// <returns></returns>
 	char *new_line = NULL;
 	char *next_line = NULL;
 	char* output_path = NULL;
@@ -553,7 +568,6 @@ DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWO
 	DWORD last_error;
 	if (INVALID_HANDLE_VALUE == h_file)
 	{
-		return n_readen;
 		return n_readen;
 	}
 	//move file pointer in ofset
@@ -627,6 +641,14 @@ DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
 
 int print_to_output_file(int time, int virtual_page_num, int physical_frame_num, char eviction_placement)
 {
+	/// <summary>
+	/// print to output file log line from when ever we put new page or evict page from the page table 
+	/// </summary>
+	/// <param name="time of placement/eviction in frame</param>
+	/// <param name="virtual_page_num"><virtual page number</param>
+	/// <param name="physical_frame_num">number frame physical </param>
+	/// <param name="eviction_placement">'P' for  placement and 'E' for evict</param>
+	/// <returns></returns>
 	DWORD num_char_written = 0;
 	int write_buffer_len = floor(max(log10(time), 0)) + 1 + floor(max(log10(virtual_page_num), 0)) + 1 + floor(max(log10(physical_frame_num), 0)) + 1 + 1 + 6; // time+virtual_page_num+physical_frame_num+eviction_placement+"   \r\n"
 	char* p_write_buffer = (char*)malloc(write_buffer_len * sizeof(char));
@@ -647,14 +669,14 @@ int print_to_output_file(int time, int virtual_page_num, int physical_frame_num,
 }
 
 //read input functions
-int count_chars(const char* string, char ch)
+int count_chars(const char* p_string, char ch)
 {
 	long count = 0;
 	long i;
-	long length = strlen(string);
+	long length = strlen(p_string);
 	for (i = 0; i < length; i++)
 	{
-		if (string[i] == ch)
+		if (p_string[i] == ch)
 		{
 			count++;
 		}
@@ -665,21 +687,27 @@ int count_chars(const char* string, char ch)
 
 char* get_next_line(char* p_line, row_obj_t* p_next_line_params)
 {
+	/// <summary>
+	/// take the p_line text and cut the first line of it find the argumants in the line and set them in p_next_line_params struct
+	/// </summary>
+	/// <param name="p_line">string of text</param>
+	/// <param name="next_line_params">pointer of the struct witch will hold the info of the command</param>
+	/// <returns>pointer to the string text that have the ramaining commands</returns>
 	const char seprete[] = "\n";
-	char* new_line = NULL;
-	char* next_line = NULL;
-	char* input_param = NULL;
+	char* p_new_line = NULL;
+	char* p_next_line = NULL;
+	char* p_input_param = NULL;
 	int input_arr[NUM_ROW_PARAMS] = { 0 };
-	new_line = strtok_s(p_line, seprete, &next_line);
+	p_new_line = strtok_s(p_line, seprete, &p_next_line);
 	for (int param_ind = 0; param_ind < NUM_ROW_PARAMS; param_ind++)
 	{
-		input_param = strtok_s(new_line, " ", &new_line);
-		input_arr[param_ind] = atoi(input_param);
+		p_input_param = strtok_s(p_new_line, " ", &p_new_line);
+		input_arr[param_ind] = atoi(p_input_param);
 	}
 	p_next_line_params->start_time = input_arr[0];//the start time
 	p_next_line_params->physical_frame_num = input_arr[1] / PAGE_SIZE;//the number of page that corseponds to the adress
 	p_next_line_params->work_time = input_arr[2];//the time the page works
-	return next_line;
+	return p_next_line;
 };
 
 // table functions
@@ -1053,13 +1081,13 @@ void free_resource(queue_cell_t *p_queue_head_1, queue_cell_t *p_queue_head_2)
 		printf("unable to close all  threads and handels\n");
 	}
 	//free memory resource
-	mem_queue_cell_t* temp_resource_cell = NULL;
+	mem_queue_cell_t* p_temp_resource_cell = NULL;
 	while (NULL != pg_resource_head)
 	{
-		temp_resource_cell = pg_resource_head;
+		p_temp_resource_cell = pg_resource_head;
 		pg_resource_head = pg_resource_head->p_next;
-		free(temp_resource_cell->p_pointer);
-		free(temp_resource_cell);
+		free(p_temp_resource_cell->p_pointer);
+		free(p_temp_resource_cell);
 	}
 	queue_cell_t* temp_queue_cell = NULL;
 	while (NULL != p_queue_head_1)
