@@ -62,6 +62,7 @@ static queue_cell_t* pg_thread_queue_head = NULL;
 static mem_queue_cell_t* resource_head = NULL;
 static int g_avilable_frame = 0;
 static int g_num_rows = 0;
+const char *pg_output_file_path = NULL;
 
 
 
@@ -95,9 +96,11 @@ void *get_mem_resource(size_t size, const char* error_msg, int* return_valu);
 void free_resource(queue_cell_t* p_queue_head_1, queue_cell_t* p_queue_head_2);
 int close_handels();
 //file functions
+HANDLE create_file_simple(LPCSTR p_file_name, char mode);
 DWORD get_file_len(LPCSTR p_file_name);
 DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len);
 DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
+LPCSTR get_output_path(LPCSTR p_input_path);
 int print_to_output_file(int time, int virtual_page_num, int physical_frame_num, char eviction_placement);
 
 static DWORD WINAPI page_thread(LPVOID lpParam); 
@@ -112,6 +115,7 @@ int main(int argc, char* argv[])
 		return ERROR_CODE;
 	}
 	const char* p_input_file_path = argv[INPUT_FILE_PATH_IND];//the path to open the file
+	pg_output_file_path = get_output_path(p_input_file_path);
 	g_num_of_pages = (int)pow(2,((double)atoi(argv[NUM_BITS_IN_VIRTUAL_MEM_IND])- MIN_BITS_IN_MEM));
 	g_num_of_frames = (int)pow(2,((double)atoi(argv[NUM_BITS_PHYSICAL_MEM_IND]) - MIN_BITS_IN_MEM));
 	create_tabels();
@@ -459,6 +463,53 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 	}
 	return h_file;
 }
+LPCSTR get_output_path(LPCSTR p_input_path)
+{
+	char *new_line = NULL;
+	char *next_line = NULL;
+	char* output_path = NULL;
+	int out_phath_len = strlen(OUTPUT_PATH) + strlen(p_input_path);
+	int mem_retrun = 0;
+	if (count_chars(p_input_path, '/'))
+	{
+		output_path = (char*)get_mem_resource(out_phath_len * sizeof(char),"error when alocate memory for output_path",&mem_retrun);
+		if(NULL == output_path)
+		{
+			free_resource(pg_frame_queue_head, pg_thread_queue_head);
+			return ERROR_CODE;
+		}
+		strcpy_s(output_path, out_phath_len, p_input_path);
+		for (int ind = strlen(p_input_path); ind >0; ind--)
+		{
+			if (output_path[ind] == '/')
+			{
+				output_path[ind + 1] = '\0';
+				strcat_s(output_path, out_phath_len, OUTPUT_PATH);
+				return(output_path);
+			}
+		}
+	}
+	if (count_chars(p_input_path, '\\'))
+	{
+		output_path = (char*)get_mem_resource((strlen(OUTPUT_PATH) + strlen(p_input_path)) * sizeof(char), "error when alocate memory for output_path", &mem_retrun);
+		if (NULL == output_path)
+		{
+			free_resource(pg_frame_queue_head, pg_thread_queue_head);
+			return ERROR_CODE;
+		}
+		strcpy_s(output_path, out_phath_len, p_input_path);
+		for (int ind = strlen(p_input_path); ind > 0; ind--)
+		{
+			if (output_path[ind] == '\\')
+			{
+				output_path[ind + 1] = '\0';
+				strcat_s(output_path, out_phath_len, OUTPUT_PATH);
+				return(output_path);
+			}
+		}
+	}
+	return OUTPUT_PATH;
+}
 
 DWORD read_from_file(LPCSTR p_file_name, long offset, LPVOID p_buffer, const DWORD buffer_len)
 {
@@ -556,7 +607,7 @@ int print_to_output_file(int time, int virtual_page_num, int physical_frame_num,
 		return ERROR_CODE;
 	}
 	sprintf_s(p_write_buffer, write_buffer_len, "%d %d %d %c\r\n", time, virtual_page_num, physical_frame_num, eviction_placement);
-	num_char_written = write_to_file(OUTPUT_PATH, p_write_buffer, write_buffer_len - 1);
+	num_char_written = write_to_file(pg_output_file_path, p_write_buffer, write_buffer_len - 1);
 	free(p_write_buffer);
 	if (num_char_written == write_buffer_len - 1)
 	{
@@ -585,7 +636,7 @@ int count_chars(const char* string, char ch)
 
 char* get_next_line(char* p_line, row_obj_t* p_next_line_params)
 {
-	char seprete[] = "\n";
+	const char seprete[] = "\n";
 	char* new_line = NULL;
 	char* next_line = NULL;
 	char* input_param = NULL;
@@ -976,13 +1027,13 @@ void free_resource(queue_cell_t *p_queue_head_1, queue_cell_t *p_queue_head_2)
 	{
 		temp_queue_cell = p_queue_head_1;
 		p_queue_head_1 = p_queue_head_1->p_next;
-		free(p_queue_head_1);
+		free(temp_queue_cell);
 	}
 	while (NULL != p_queue_head_2)
 	{
 		temp_queue_cell = p_queue_head_2;
 		p_queue_head_2 = p_queue_head_2->p_next;
-		free(p_queue_head_2);
+		free(temp_queue_cell);
 	}
 
 }
