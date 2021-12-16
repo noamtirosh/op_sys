@@ -66,7 +66,8 @@ static queue_cell_t* pg_thread_queue_head = NULL;
 static mem_queue_cell_t* pg_resource_head = NULL;
 static int g_avilable_frame = 0;
 static int g_num_rows = 0;
-const char *pg_output_file_path = NULL;
+static const char *pg_output_file_path = NULL;
+static int g_current_time = 0;
 
 
 
@@ -186,7 +187,6 @@ DWORD run_pages()
 	DWORD wait_code;
 	BOOL ret_val;
 	int resource_aloc_check = 0;
-	int current_time = 0;
 	row_obj_t next_row_input;
 	char* p_next_line = NULL;
 	int current_row_ind = 0;
@@ -210,11 +210,11 @@ DWORD run_pages()
 	while (current_row_ind != g_num_rows || NULL != pg_thread_queue_head)
 	{
 		//create new thread
-		if (next_row_input.start_time < current_time && current_row_ind != g_num_rows)
+		if (next_row_input.start_time < g_current_time && current_row_ind != g_num_rows)
 		{
-			if (next_row_input.start_time == current_time - 1)
+			if (next_row_input.start_time == g_current_time - 1)
 			{
-				current_time--;
+				g_current_time--;
 			}
 			else
 			{
@@ -222,10 +222,10 @@ DWORD run_pages()
 				return ERROR_CODE;
 			}
 		}
-		if (next_row_input.start_time == current_time)
+		if (next_row_input.start_time == g_current_time)
 		{
 
-			init_new_thread(pg_thread_handle_arr + current_row_ind, p_thread_input_arr + current_row_ind, current_row_ind, current_time, next_row_input.work_time, next_row_input.physical_frame_num);
+			init_new_thread(pg_thread_handle_arr + current_row_ind, p_thread_input_arr + current_row_ind, current_row_ind, g_current_time, next_row_input.work_time, next_row_input.physical_frame_num);
 			wait_code = WaitForSingleObject(g_main_semapore, INFINITE);
 			if (WAIT_OBJECT_0 != wait_code)
 			{
@@ -262,7 +262,7 @@ DWORD run_pages()
 		//check_if_any_frame_end
 		for (int frame_ind = 0; frame_ind < g_num_of_frames; frame_ind++)
 		{
-			if (pg_frame_table[frame_ind].end_time == current_time) 
+			if (pg_frame_table[frame_ind].end_time == g_current_time) 
 			{
 				if (ERROR_CODE == add_to_frame_queue(frame_ind))
 				{
@@ -284,7 +284,7 @@ DWORD run_pages()
 			printf("Error when releasing\n");
 			return ERROR_CODE;
 		}
-		current_time++;
+		g_current_time++;
 		
 	}
 
@@ -979,7 +979,11 @@ void evicte_and_place(int placement_time,int work_time, int page_ind)
 void update_frame_in_table(int page_ind, int placement_time,int page_work_time)
 {
 	//update end_of_use in page table TODO change name to end_of_use
-	int new_end_of_use = max(pg_page_table[page_ind].end_of_use + page_work_time, placement_time + page_work_time);
+	int new_end_of_use = max(pg_page_table[page_ind].end_of_use, placement_time + page_work_time);
+	if (new_end_of_use  ==  g_current_time)
+	{
+		new_end_of_use = new_end_of_use + page_work_time;
+	}
 	pg_page_table[page_ind].end_of_use = new_end_of_use;
 	//update end_of_use in frame table
 	pg_frame_table[pg_page_table[page_ind].frame_number].end_time = new_end_of_use;

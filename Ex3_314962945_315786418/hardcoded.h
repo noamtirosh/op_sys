@@ -17,6 +17,7 @@
 #define NOT_VALID  0
 #define VALID 1 
 #define NUM_ROW_PARAMS 3
+#define DIR_CHAR = '\\'
 
 
 #endif // !HARDCODED_H
