@@ -342,20 +342,54 @@ void client_ux(int stage)
 		return 0x555; //"quit" signals an exit from the client side
 	switch (stage)
 	{
-	case 1:
+	case 2:
 		printf("Server on <ip>:<port> denied the connection request\nChoose what to do next:\n1. Try to reconnect\n2. Exit\n");
 		break;
-	case 2:
+	case 3:
+		printf("Choose what to do next:\n1. Play against another client\n2. Quit\n");
+		break;
+	case 4:
 		printf("Game is on!\n");
-	default:
+		break;
+	case 5:
+		if (STRINGS_ARE_EQUAL(g_other_player_username, g_user_name))
+		{
+			printf("Your turn!\n");
+		}
+		else
+		{
+			printf("%s's turn!\n", g_other_player_username);
+		}		
+		break;
+	case 6:
+		printf("Enter the next number or boom:\n");
+		break;
+	case 7:
+		printf("%s won!\n", g_other_player_username);
+		break;
+	case 8:
+		//TODO wait 30 sec and then main manue
+		break;
+	case 9:
+		;
+		char is_end_msg[END_MSG_MAX_LEN] = CONTINUE_GAME;
+		if (g_is_game_end)
+			strcpy(is_end_msg, END_GAME);
+		if (BOOM_VLUE == g_other_player_num)
+		{
+			printf("%s move was %s %s\n", g_other_player_username,BOOM_TEXT, is_end_msg);
+		}
+		else
+		{
+			printf("%s move was %d %s\n", g_other_player_username, g_other_player_num, is_end_msg);
+		}
+		break;
+	case 10:
+		printf("Opponent quit .\n");
 		break;
 	}
-	printf("Your turn!\n");
-	printf("%s's turn!\n", g_other_player_username);
-	printf("Enter the next number or boom:\n");
-	printf("%s move was <the number he chose>< if the game ended >\n", g_other_player_username);
-	printf("<winner> won!\n");
-	printf("Opponent quit .\n");
+	
+	
 	printf("Error:Illegal command\n");
 
 
@@ -426,7 +460,7 @@ void get_the_command(char* p_command)
 	return 0;
 }
 
-void read_massage_from_server(char* Str)
+int read_massage_from_server(char* Str)
 {
 	int index = 0;
 	int type = 0;
@@ -482,6 +516,7 @@ void read_massage_from_server(char* Str)
 			if (is_boom)
 			{
 				//TODO handle boom 
+				g_other_player_num = BOOM_VLUE;
 			}
 			else
 			{
@@ -495,7 +530,7 @@ void read_massage_from_server(char* Str)
 
 			}
 			//is end
-			char is_end_msg[] = { 0 };
+			char is_end_msg[END_MSG_MAX_LEN] = { 0 };
 			int msg_ind = 0;
 			while (Str[index] != MASSGAE_END)
 			{
@@ -509,6 +544,7 @@ void read_massage_from_server(char* Str)
 			}
 		index++;
 	}
+	return type;
 }
 
 //		gets_s(SendStr, sizeof(SendStr)); //Reading a string from the keyboard
