@@ -142,6 +142,5 @@ TransferResult_t ReceiveString( char** OutputStrPtr, SOCKET sd , HANDLE wait_eve
 	{
 		free( StrBuffer );
 	}
-		
 	return RecvRes;
 }

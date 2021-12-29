@@ -8,5 +8,13 @@
 #define SUCCESS_CODE 0
 #define MAX_USERNAME_LEN 20
 #define MAX_TIME_FOR_TIMEOUT 15
+#define MASSGAE_END '\n'
+#define PRAMS_SEPARATE ';'
+#define MASSGAE_TYPE_SEPARATE ':'
+#define BOOM_TEXT "boom"
+#define END_GAME "END"
+#define CONTINUE_GAME "CONT"
+#define MASSGAE_TYPE_MAX_LEN 20
+#define NUM_SERVER_TYPES 10
 #endif // !CLIENT_HARD_CODE_H
 
