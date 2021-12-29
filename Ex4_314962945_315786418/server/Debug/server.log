@@ -1,0 +1,14 @@
+﻿  SocketSendRecvTools.c
+  server_main.c
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(21,12): warning C4013: 'MainServer' undefined; assuming extern returning int
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(54,15): warning C4013: 'clean_server' undefined; assuming extern returning int
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(30,16): warning C4101: 'Address': unreferenced local variable
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(31,14): warning C4101: 'service': unreferenced local variable
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(28,6): warning C4101: 'Loop': unreferenced local variable
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(27,6): warning C4101: 'Ind': unreferenced local variable
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(33,6): warning C4101: 'ListenRes': unreferenced local variable
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(32,6): warning C4101: 'bindRes': unreferenced local variable
+  Generating Code...
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(56): warning C4715: 'MainServer': not all control paths return a value
+C:\git_repos\op_sys\Ex4_314962945_315786418\server\server_main.c(74): warning C4715: 'clean_server': not all control paths return a value
+  server.vcxproj -> C:\git_repos\op_sys\Ex4_314962945_315786418\Debug\server.exe

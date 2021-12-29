@@ -1,0 +1,12 @@
+#ifndef CLIENT_HARD_CODE_H
+#define CLIENT_HARD_CODE_H
+#define NUM_OF_INPUTS 3
+#define SERVER_IP_IND 1
+#define SERVER_PORT_IND 2
+#define USERNAME_IND 2
+#define ERROR_CODE 1
+#define SUCCESS_CODE 0
+#define MAX_USERNAME_LEN 20
+#define MAX_TIME_FOR_TIMEOUT 15
+#endif // !CLIENT_HARD_CODE_H
+

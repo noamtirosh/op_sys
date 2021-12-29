@@ -1,0 +1,10 @@
+#ifndef SERVER_HARD_CODED_H
+#define SERVER_HARD_CODED_H
+#define NUM_OF_INPUTS 1
+#define PORT_NUM_IND 1
+#define ERROR_CODE 1
+#define SUCCESS_CODE 0
+#define MAX_NUM_CLIENTS 3
+
+#endif // !SERVER_HARD_CODED_H
+
