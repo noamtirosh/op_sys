@@ -47,8 +47,8 @@ TransferResult_t SendString( const char *Str, SOCKET sd)
 
 	/* The request is sent in two parts. First the Length of the string (stored in 
 	   an int variable ), then the string itself. */
-		
-	TotalStringSizeInBytes = (int)( strlen(Str) + 1 ); // terminating zero also sent	
+	//TODO do we need to add \0?
+	TotalStringSizeInBytes = get_message_len(Str) + 1; // terminating zero also sent	
 
 	SendRes = SendBuffer( 
 		(const char *)( &TotalStringSizeInBytes ),
@@ -143,4 +143,15 @@ TransferResult_t ReceiveString( char** OutputStrPtr, SOCKET sd , HANDLE wait_eve
 		free( StrBuffer );
 	}
 	return RecvRes;
+}
+
+int get_message_len(char* message)
+{
+	int len = 0;
+	while ('\n' != message[len])
+	{
+		len++;
+	}
+	return len+1;
+
 }

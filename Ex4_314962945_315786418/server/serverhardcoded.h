@@ -5,6 +5,8 @@
 #define ERROR_CODE 1
 #define SUCCESS_CODE 0
 #define MAX_NUM_CLIENTS 3
+#define MAX_NUM_PLAYERS 2
+#define EVENT_NAME_LEN 30
 
 #endif // !SERVER_HARD_CODED_H
 

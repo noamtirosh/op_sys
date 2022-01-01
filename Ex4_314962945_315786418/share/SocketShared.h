@@ -18,6 +18,17 @@
 #define STRINGS_ARE_EQUAL( Str1, Str2 ) ( strcmp( (Str1), (Str2) ) == 0 )
 
 #define  CLIENT_REQ "CLIENT_REQUEST"
+#define MASSGAE_TYPE_MAX_LEN 20
+#define MAX_USERNAME_LEN 20
+#define NUM_SERVER_TYPES 10
+#define NUM_CLIENT_TYPES 4
+#define MAX_TIME_FOR_TIMEOUT 15
+#define MASSGAE_END '\n'
+#define PRAMS_SEPARATE ';'
+#define MASSGAE_TYPE_SEPARATE ':'
+#define BOOM_TEXT "boom"
+#define BOOM_VLUE -10 
+#define MAX_MESSAGES_IN_BUF 10
 
 /*oOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoOoO*/
 

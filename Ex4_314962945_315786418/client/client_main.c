@@ -21,16 +21,17 @@
 
 HANDLE g_wait_for_server_event;
 SOCKET g_m_socket;
-char* gp_recived_massge = NULL;
-char* gp_massage_to_send = NULL;
-BOOLEAN g_is_time_out = FALSE;
+char* gp_recived_massge_arr = NULL;
+char* gp_massage_to_send_arr = NULL;
+BOOLEAN g_is_time_out_arr = FALSE;
 BOOLEAN g_is_game_end = FALSE;
-static HANDLE g_send_semapore = NULL;
-static HANDLE g_rcev_semapore = NULL;
+static HANDLE g_send_semapore_arr = NULL;
+static HANDLE g_rcev_semapore_arr = NULL;
 char  g_user_name[MAX_USERNAME_LEN] = { 0 };
 char g_other_player_username[MAX_USERNAME_LEN] = { 0 };
 int g_other_player_num = 0;
-
+enum client_types { CLIENT_REQUEST, CLIENT_VERSUS, CLIENT_PLAYER_MOVE, CLIENT_DISCONNECT };
+enum server_types { SERVER_APPROVED, SERVER_DENIED, SERVER_MAIN_MENU, GAME_STARTED, TURN_SWITCH, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
 char message_type[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT","SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 char client_meaasge[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
 char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
@@ -48,7 +49,7 @@ int main(int argc, char* argv[])
 	int server_port = atoi(argv[SERVER_PORT_IND]);
 	char user_name[MAX_USERNAME_LEN] = { 0 };
 	strcpy(user_name, argv[USERNAME_IND]);
-	while (g_is_time_out)
+	while (g_is_time_out_arr)
 	{
 
 	}
@@ -80,14 +81,14 @@ static DWORD RecvDataThread(void)
 		}
 		else
 		{
-			if (NULL != gp_recived_massge)
+			if (NULL != gp_recived_massge_arr)
 			{
-				free(gp_recived_massge);
+				free(gp_recived_massge_arr);
 			}
-			gp_recived_massge = AcceptedStr;
+			gp_recived_massge_arr = AcceptedStr;
 			//release semaphore for next thred
 			ret_val = ReleaseSemaphore(
-				g_rcev_semapore,
+				g_rcev_semapore_arr,
 				1, 		/* Signal that exactly one cell was emptied */
 				&wait_code);
 			if (FALSE == ret_val)
@@ -110,26 +111,26 @@ static DWORD SendDataThread(void)
 
 	while (1)
 	{
-		wait_code = WaitForSingleObject(g_send_semapore, INFINITE);
+		wait_code = WaitForSingleObject(g_send_semapore_arr, INFINITE);
 		if (wait_code != WAIT_OBJECT_0)
 		{
 			printf("Error when waiting for semapore\n");
 			return ERROR_CODE;
 		}
-		SendRes = SendString(gp_massage_to_send, g_m_socket);
+		SendRes = SendString(gp_massage_to_send_arr, g_m_socket);
 		if (SendRes == TRNS_FAILED)
 		{
 			printf("Socket error while trying to write data to socket\n");
 			return 0x555;
 		}
 		//free the client massage to send buffer
-		free(gp_massage_to_send);
-		gp_massage_to_send = NULL;
+		free(gp_massage_to_send_arr);
+		gp_massage_to_send_arr = NULL;
 		wait_code = WaitForSingleObject(g_wait_for_server_event, MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 		//wait for the server respond
 		if (WAIT_TIMEOUT == wait_code)
 		{
-			g_is_time_out = TRUE;
+			g_is_time_out_arr = TRUE;
 			printf("server is not rsponding error while trying to write data to socket\n");
 			//TODO close graceful
 		}
@@ -237,12 +238,15 @@ void send_to_server(const char* Str, SOCKET m_socket)
 {
 	DWORD wait_res;
 	TransferResult_t SendRes;
+	//reset_server_event
+	wait_res = WaitForSingleObject(g_wait_for_server_event, 0);
 	SendRes = SendString(Str, m_socket);
 	if (SendRes == TRNS_FAILED)
 	{
 		printf("Socket error while trying to write data to socket\n");
 		return 0x555;
 	}
+	//TODO if CLIENT_VERSUS wait duble time
 	wait_res = WaitForSingleObject(g_wait_for_server_event, MAX_TIME_FOR_TIMEOUT*1000);//*1000 for secends
 	//wait for the server respond
 	if (WAIT_TIMEOUT == wait_res)
@@ -290,22 +294,22 @@ void wait_for_server()
 void sync_with_srver()
 {
 	//create semapore
-	g_send_semapore = CreateSemaphore(
+	g_send_semapore_arr = CreateSemaphore(
 		NULL,	/* Default security attributes */
 		0,		/* Initial Count - */
 		1,		/* Maximum Count */
 		NULL); /* un-named */
-	if (NULL == g_send_semapore)
+	if (NULL == g_send_semapore_arr)
 	{
 		printf("error when Create Semaphore\n");
 	}
 
-	g_rcev_semapore = CreateSemaphore(
+	g_rcev_semapore_arr = CreateSemaphore(
 		NULL,	/* Default security attributes */
 		0,		/* Initial Count - */
 		1,		/* Maximum Count */
 		NULL); /* un-named */
-	if (NULL == g_send_semapore)
+	if (NULL == g_send_semapore_arr)
 	{
 		printf("error when Create Semaphore\n");
 	}
@@ -332,7 +336,7 @@ void sync_with_srver()
 	}
 }
 
-void client_ux(int stage)
+void client_interface(int stage)
 {
 	char SendStr[256];
 	printf("Choose what to do next:\n1. Play against another client\n2. Quit");
@@ -487,7 +491,7 @@ int read_massage_from_server(char* Str)
 	while (Str[index]!= MASSGAE_END)
 	{
 		// has name parmeter
-		if (4 == type || 6 == type|| 8 == type)//TURN_SWITCH/GAME_ENDED/GAME_VIEW
+		if (TURN_SWITCH == type || GAME_ENDED == type|| GAME_VIEW == type)
 		{
 			int name_ind = 0;
 			while (Str[index] != PRAMS_SEPARATE && Str[index] != MASSGAE_END)
@@ -496,9 +500,10 @@ int read_massage_from_server(char* Str)
 				index++;
 				name_ind++;
 			}
-			g_other_player_username[name_ind] = 0;
+			//TODO is the username includes \0
+			g_other_player_username[name_ind] = '\0';
 		}
-		if (8 == type)//GAME_VIEW
+		if (GAME_VIEW == type)
 		{
 			index++;
 			int start_ind = index;

@@ -19,6 +19,9 @@
 
 typedef enum { TRNS_FAILED, TRNS_DISCONNECTED, TRNS_SUCCEEDED } TransferResult_t;
 
+
+
+int get_message_len(char* message);
 /**
  * SendBuffer() uses a socket to send a buffer.
  *
