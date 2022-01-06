@@ -6,8 +6,6 @@
 #define USERNAME_IND 2
 #define ERROR_CODE 1
 #define SUCCESS_CODE 0
-#define END_MSG_MAX_LEN 5
-#define END_GAME "END"
-#define CONTINUE_GAME "CONT"
+#define USER_INPUT_BASE_SIZE 10
 #endif // !CLIENT_HARD_CODE_H
 

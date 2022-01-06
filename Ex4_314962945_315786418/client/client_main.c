@@ -6,7 +6,6 @@
 #define WIN32_LEAN_AND_MEAN
 #endif // !WIN32_LEAN_AND_MEAN
 
-#define STRINGS_ARE_EQUAL( Str1, Str2 ) ( strcmp( (Str1), (Str2) ) == 0 )
 
 
 #include <stdio.h>
@@ -19,22 +18,30 @@
 #include "client_hard_coded.h"
 #pragma comment(lib, "Ws2_32.lib")
 
+typedef struct message_cell_s {
+	struct message_cell_s* p_next;
+	char* p_message;
+	BOOL wait_for_response;
+}message_cell_t;
+
 HANDLE g_wait_for_server_event;
 SOCKET g_m_socket;
 char* gp_recived_massge_arr = NULL;
 char* gp_massage_to_send_arr = NULL;
 BOOLEAN g_is_time_out_arr = FALSE;
 BOOLEAN g_is_game_end = FALSE;
+message_cell_t* gp_recived_massge_hade =  NULL;
+message_cell_t* gp_massage_to_send_hade = NULL;
 static HANDLE g_send_semapore_arr = NULL;
 static HANDLE g_rcev_semapore_arr = NULL;
 char  g_user_name[MAX_USERNAME_LEN] = { 0 };
-char g_other_player_username[MAX_USERNAME_LEN] = { 0 };
+char g_server_input_username[MAX_USERNAME_LEN] = { 0 };
 int g_other_player_num = 0;
 enum client_types { CLIENT_REQUEST, CLIENT_VERSUS, CLIENT_PLAYER_MOVE, CLIENT_DISCONNECT };
 enum server_types { SERVER_APPROVED, SERVER_DENIED, SERVER_MAIN_MENU, GAME_STARTED, TURN_SWITCH, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
 char message_type[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT","SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 char client_meaasge[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
-char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
+char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","","GAME_VIEW","SERVER_OPPONENT_OUT" };
 
 
 int main(int argc, char* argv[])
@@ -47,8 +54,7 @@ int main(int argc, char* argv[])
 	}
 	char* server_ip = argv[SERVER_IP_IND];
 	int server_port = atoi(argv[SERVER_PORT_IND]);
-	char user_name[MAX_USERNAME_LEN] = { 0 };
-	strcpy(user_name, argv[USERNAME_IND]);
+	strcpy(g_user_name, argv[USERNAME_IND]);
 	while (g_is_time_out_arr)
 	{
 
@@ -86,6 +92,7 @@ static DWORD RecvDataThread(void)
 				free(gp_recived_massge_arr);
 			}
 			gp_recived_massge_arr = AcceptedStr;
+			int message_type = read_massage_from_server(gp_recived_massge_arr);
 			//release semaphore for next thred
 			ret_val = ReleaseSemaphore(
 				g_rcev_semapore_arr,
@@ -117,23 +124,12 @@ static DWORD SendDataThread(void)
 			printf("Error when waiting for semapore\n");
 			return ERROR_CODE;
 		}
-		SendRes = SendString(gp_massage_to_send_arr, g_m_socket);
-		if (SendRes == TRNS_FAILED)
-		{
-			printf("Socket error while trying to write data to socket\n");
-			return 0x555;
-		}
+		//SendRes =
+		send_to_server(gp_massage_to_send_arr, g_m_socket);
 		//free the client massage to send buffer
 		free(gp_massage_to_send_arr);
 		gp_massage_to_send_arr = NULL;
-		wait_code = WaitForSingleObject(g_wait_for_server_event, MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
-		//wait for the server respond
-		if (WAIT_TIMEOUT == wait_code)
-		{
-			g_is_time_out_arr = TRUE;
-			printf("server is not rsponding error while trying to write data to socket\n");
-			//TODO close graceful
-		}
+
 	}
 }
 
@@ -210,6 +206,13 @@ void MainClient()
 		0,
 		NULL
 	);
+	//TODO handel erorr
+	if (NULL == hThread[0])
+	{
+		printf("Couldn't create thread\n");
+		//free_resource(pg_frame_queue_head, pg_thread_queue_head);
+		exit(ERROR_CODE);
+	}
 	hThread[1] = CreateThread(
 		NULL,
 		0,
@@ -218,6 +221,13 @@ void MainClient()
 		0,
 		NULL
 	);
+	//TODO handel erorr
+	if (NULL == hThread[1])
+	{
+		printf("Couldn't create thread\n");
+		//free_resource(pg_frame_queue_head, pg_thread_queue_head);
+		exit(ERROR_CODE);
+	}
 
 	WaitForMultipleObjects(2, hThread, FALSE, INFINITE);
 
@@ -251,6 +261,7 @@ void send_to_server(const char* Str, SOCKET m_socket)
 	//wait for the server respond
 	if (WAIT_TIMEOUT == wait_res)
 	{
+		g_is_time_out_arr = TRUE;
 		printf("server is not rsponding error while trying to write data to socket\n");
 		//TODO close graceful
 	}
@@ -356,20 +367,20 @@ void client_interface(int stage)
 		printf("Game is on!\n");
 		break;
 	case 5:
-		if (STRINGS_ARE_EQUAL(g_other_player_username, g_user_name))
+		if (STRINGS_ARE_EQUAL(g_server_input_username, g_user_name))
 		{
 			printf("Your turn!\n");
 		}
 		else
 		{
-			printf("%s's turn!\n", g_other_player_username);
+			printf("%s's turn!\n", g_server_input_username);
 		}		
 		break;
 	case 6:
 		printf("Enter the next number or boom:\n");
 		break;
 	case 7:
-		printf("%s won!\n", g_other_player_username);
+		printf("%s won!\n", g_server_input_username);
 		break;
 	case 8:
 		//TODO wait 30 sec and then main manue
@@ -381,11 +392,11 @@ void client_interface(int stage)
 			strcpy(is_end_msg, END_GAME);
 		if (BOOM_VLUE == g_other_player_num)
 		{
-			printf("%s move was %s %s\n", g_other_player_username,BOOM_TEXT, is_end_msg);
+			printf("%s move was %s %s\n", g_server_input_username,BOOM_TEXT, is_end_msg);
 		}
 		else
 		{
-			printf("%s move was %d %s\n", g_other_player_username, g_other_player_num, is_end_msg);
+			printf("%s move was %d %s\n", g_server_input_username, g_other_player_num, is_end_msg);
 		}
 		break;
 	case 10:
@@ -408,11 +419,12 @@ char* readLine()
 	/// the funion will read char with unknown length
 	/// </summary>
 	/// <returns>return the string we wrote</returns>
-	int index = 0, c, capacity = 1;
+	int index = 0, c, capacity = USER_INPUT_BASE_SIZE;
 	char* buffer;
 
 	if (NULL == (buffer = (char*)malloc(capacity)))
 	{
+		//TODO handle erorr
 		return NULL;
 	}
 
@@ -420,9 +432,15 @@ char* readLine()
 	{
 		if (index == capacity - 1)
 		{
-			if (NULL == (buffer = (char*)realloc(buffer, capacity + 1)))
+			char* resize_buffer;
+			if (NULL == (resize_buffer = (char*)realloc(buffer, capacity + USER_INPUT_BASE_SIZE)))
+			{
+				if (buffer != NULL)
+					free(buffer);
 				return NULL;
-			capacity += 1;
+			}
+			buffer = resize_buffer;
+			capacity += USER_INPUT_BASE_SIZE;
 		}
 		buffer[index++] = c;
 	}
@@ -430,7 +448,7 @@ char* readLine()
 	return buffer;
 }
 
-void get_the_command(char* p_command)
+void get_user_command(char* p_command)
 {
 	/// <summary>
 	/// the code will get the input of the player and will send it to the game
@@ -496,12 +514,12 @@ int read_massage_from_server(char* Str)
 			int name_ind = 0;
 			while (Str[index] != PRAMS_SEPARATE && Str[index] != MASSGAE_END)
 			{
-				g_other_player_username[name_ind] = Str[index];
+				g_server_input_username[name_ind] = Str[index];
 				index++;
 				name_ind++;
 			}
 			//TODO is the username includes \0
-			g_other_player_username[name_ind] = '\0';
+			g_server_input_username[name_ind] = '\0';
 		}
 		if (GAME_VIEW == type)
 		{
@@ -551,6 +569,166 @@ int read_massage_from_server(char* Str)
 	}
 	return type;
 }
+
+
+void client_response(int type)
+{
+
+
+	char* p_user_input = NULL;
+	if (SERVER_APPROVED == type)
+	{
+
+	}
+	else if (SERVER_DENIED == type)
+	{
+		printf("Server on <ip>:<port> denied the connection request\nChoose what to do next:\n1. Try to reconnect\n2. Exit\n");
+		p_user_input = readLine();
+		if (STRINGS_ARE_EQUAL(p_user_input, "1"))
+		{
+
+		}
+		else if (STRINGS_ARE_EQUAL(p_user_input, "2"))
+		{
+		}
+		else
+		{
+			printf("Error:Illegal command\n");
+		}
+
+	}
+	else if(SERVER_MAIN_MENU == type)
+	{
+		printf("Choose what to do next:\n1. Play against another client\n2. Quit\n");
+		p_user_input = readLine();
+		if (STRINGS_ARE_EQUAL(p_user_input, "1"))
+		{
+
+		}
+		else if (STRINGS_ARE_EQUAL(p_user_input, "2"))
+		{
+		}
+		else
+		{
+			printf("Error:Illegal command\n");
+		}
+	}
+	else if (GAME_STARTED == type)
+	{
+		printf("Game is on!\n");
+	}
+	else if (TURN_SWITCH == type)
+	{
+		if (STRINGS_ARE_EQUAL(g_server_input_username, g_user_name))
+		{
+			printf("Your turn!\n");
+		}
+		else
+		{
+			printf("%s's turn!\n", g_server_input_username);
+		}
+	}
+	else if (SERVER_MOVE_REQUEST == type)
+	{
+		printf("Enter the next number or boom:\n");
+		p_user_input = readLine();
+		char* p_message_to_add = (char*)malloc(sizeof(char) * msg_len);
+		if (NULL == p_message_to_add)
+		{
+			//TODO add erorr
+		}
+
+	}
+	else if (GAME_ENDED == type)
+	{
+		printf("%s won!\n", g_server_input_username);
+	}
+	else if (GAME_VIEW == type)
+	{
+		char is_end_msg[END_MSG_MAX_LEN] = CONTINUE_GAME;
+		if (g_is_game_end)
+			strcpy(is_end_msg, END_GAME);
+		if (BOOM_VLUE == g_other_player_num)
+		{
+			printf("%s move was %s %s\n", g_server_input_username, BOOM_TEXT, is_end_msg);
+		}
+		else
+		{
+			printf("%s move was %d %s\n", g_server_input_username, g_other_player_num, is_end_msg);
+		}
+	}
+	else if (SERVER_OPPONENT_OUT == type)
+	{
+		printf("Opponent quit .\n");
+	}
+	else
+	{
+
+	}
+}
+
+void send_message_to_server(int msg_len, char* p_message, BOOL wait_for_response)
+{
+
+	/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="msg_len"></param>
+		/// <param name="client_ind"></param>
+		/// <param name="type"></param>
+		/// <param name="p_params">with need to have MASSGAE_END in the end</param>
+		/// <param name="wait_for_response">if true the thread how send the message wait for response for </param>
+		/// <returns></returns>
+	DWORD wait_res;
+	BOOL ret_val;
+
+	gp_massage_to_send_hade = add_message_to_cell_arr(p_message, gp_massage_to_send_hade, wait_for_response);
+	ret_val = ReleaseSemaphore(
+		g_send_semapore_arr,
+		1, 		/* Signal that exactly one cell was emptied */
+		&wait_res);
+	if (FALSE == ret_val)
+	{
+		printf("Error when releasing\n");
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+}
+
+message_cell_t* add_message_to_cell_arr(char* p_str, message_cell_t* p_cell_head, BOOL wait_for_response)
+{
+	/// <summary>
+	/// 
+	/// </summary>
+	/// <param name="p_str"></param>
+	/// <param name="p_cell_head"></param>
+	/// <param name="wait_for_response"></param>
+	/// <returns></returns>
+	message_cell_t* p_temp_cell = p_cell_head;
+	message_cell_t* p_new_cell = (message_cell_t*)malloc(sizeof(message_cell_t));
+	if (NULL == p_new_cell)
+	{
+	}
+	p_new_cell->wait_for_response = wait_for_response;
+	p_new_cell->p_next = NULL;
+	p_new_cell->p_message = p_str;
+
+	if (NULL == p_temp_cell)
+	{
+		return p_new_cell;
+	}
+	else
+	{
+		while (NULL != p_temp_cell->p_next)
+		{
+			p_temp_cell = p_temp_cell->p_next;
+		}
+		p_temp_cell->p_next = p_new_cell;
+		return p_cell_head;
+	}
+}
+
+
 
 //		gets_s(SendStr, sizeof(SendStr)); //Reading a string from the keyboard
 //		if (STRINGS_ARE_EQUAL(SendStr, "quit"))

@@ -27,6 +27,9 @@
 #define PRAMS_SEPARATE ';'
 #define MASSGAE_TYPE_SEPARATE ':'
 #define BOOM_TEXT "boom"
+#define END_GAME "END"
+#define CONTINUE_GAME "CONT"
+#define END_MSG_MAX_LEN 5
 #define BOOM_VLUE -10 
 #define MAX_MESSAGES_IN_BUF 10
 
