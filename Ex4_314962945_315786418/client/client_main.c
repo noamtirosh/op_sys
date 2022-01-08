@@ -650,11 +650,14 @@ int read_massage_from_server(char* Str)
 				{
 					index++;
 				}
+				char temp_char = Str[index];
 				Str[index] = '\0';
 				g_other_player_num = atoi(Str + start_ind);//human readable
+				Str[index] = temp_char;
 
 			}
 			//is end
+			index++;
 			char is_end_msg[END_MSG_MAX_LEN] = { 0 };
 			int msg_ind = 0;
 			while (Str[index] != MASSGAE_END)
@@ -663,7 +666,7 @@ int read_massage_from_server(char* Str)
 				index++;
 				msg_ind++;
 			}
-			Str[index] = '\0';
+			is_end_msg[msg_ind]= '\0';
 			g_is_game_end = STRINGS_ARE_EQUAL(is_end_msg, END_GAME);
 			
 			}
@@ -756,12 +759,22 @@ void client_response()
 		else if (SERVER_MOVE_REQUEST == message_type)
 		{
 			printf("Enter the next number or boom:\n");
+			char* p_user_input = NULL;
 			p_user_input = readLine();
-			//	char* p_message_to_add = (char*)malloc(sizeof(char) * msg_len);
-				//if (NULL == p_message_to_add)
-				//{
-					//TODO add erorr
-			//	}
+			//message type + \n + MASSGAE_TYPE_SEPARATE
+			int message_len = MASSGAE_TYPE_MAX_LEN + strlen(p_user_input)+2;//TODO if input as /0 in it need to change
+			char *message= (char*)malloc(sizeof(char)*message_len);
+			if (NULL == message)
+			{
+				//TODO add erorr
+				return ERROR_CODE;
+
+			}
+			sprintf_s(message, message_len, "%s%c%s%c", client_meaasge[CLIENT_PLAYER_MOVE], MASSGAE_TYPE_SEPARATE, p_user_input, MASSGAE_END);
+			free(p_user_input);
+			//send to server
+			send_message_to_server(message, get_message_len(message), MAX_TIME_FOR_TIMEOUT);
+			free(message);
 
 		}
 		else if (GAME_ENDED == message_type)

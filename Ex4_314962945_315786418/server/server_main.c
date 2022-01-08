@@ -215,13 +215,15 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 {
 	thread_input_t* p_current_client_input = (thread_input_t*)t_socket;
 	int client_num = p_current_client_input->client_num;
+	SOCKET client_socket = p_current_client_input->client_socket;
+
 	TransferResult_t RecvRes;
 	while (g_is_thread_active[client_num])
 	{
 		DWORD wait_code;
 		BOOL ret_val;
 		char* AcceptedStr = NULL;
-		RecvRes = ReceiveString(&AcceptedStr, p_current_client_input->client_socket, g_wait_for_client_event[client_num]);
+		RecvRes = ReceiveString(&AcceptedStr, client_socket, g_wait_for_client_event[client_num]);
 		//TODO choose one or marge
 		if (RecvRes == TRNS_FAILED)
 		{
@@ -231,7 +233,7 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 		if (RecvRes == TRNS_FAILED)
 		{
 			printf("Service socket error while writing, closing thread.\n");
-			closesocket(p_current_client_input->client_socket);
+			closesocket(client_socket);
 			return 1;
 		}
 		else if (RecvRes == TRNS_DISCONNECTED)
@@ -240,9 +242,9 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 			{
 				g_is_thread_active[client_num] = FALSE;
 				//TODO send final transmssion
-				shutdown(p_current_client_input->client_socket, SD_SEND);//will stop sending info
+				shutdown(client_socket, SD_SEND);//will stop sending info
 			}
-			closesocket(p_current_client_input->client_socket);
+			closesocket(client_socket);
 			printf("Server closed connection. Bye!\n");
 			return TRNS_DISCONNECTED;
 		}
@@ -250,7 +252,7 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 		{
 			int massage_type = read_massage_from_client(AcceptedStr, client_num);
 			int response_type = server_send_response(massage_type, client_num);
-			if(SERVER_DENIED == response_type)
+			if(CLIENT_DISCONNECT == massage_type)
 			{
 				// close tread 
 				//TODO close threads 
@@ -269,6 +271,7 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 {
 	thread_input_t* p_current_client_input = (thread_input_t*)t_socket;
 	int client_num = p_current_client_input->client_num;
+	SOCKET client_socket = p_current_client_input->client_socket;
 	TransferResult_t SendRes;
 	DWORD wait_code;
 
@@ -281,7 +284,7 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			//try graceful_shutdown 
 			//reset client_event
 			wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);
-			shutdown(p_current_client_input->client_socket, SD_SEND);//will stop sending info
+			shutdown(client_socket, SD_SEND);//will stop sending info
 			wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 			//wait for the server respond
 			if (WAIT_TIMEOUT == wait_code)
@@ -290,7 +293,7 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 				printf("server is not rsponding error while trying to write data to socket\n");
 				//TODO close graceful
 			}
-			closesocket(p_current_client_input->client_socket);
+			closesocket(client_socket);
 			g_is_thread_active[client_num] = FALSE;
 		}
 		else
@@ -311,9 +314,11 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			message_cell_t* p_temp_cell = gp_massage_to_send_hade[client_num]->p_next;
 			BOOL wait_for_response = gp_massage_to_send_hade[client_num]->wait_for_response;
 			if (wait_for_response)
+			{				
 				//reset client_event
 				wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
-			SendRes = SendString(p_massage_to_send, p_current_client_input->client_socket);
+			}
+			SendRes = SendString(p_massage_to_send, client_socket);
 			//free the client massage to send buffer
 			free(p_massage_to_send);
 			free(gp_massage_to_send_hade[client_num]);
@@ -333,8 +338,8 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			if (SendRes == TRNS_FAILED)
 			{
 				printf("Service socket error while writing, closing thread.\n");
-				closesocket(p_current_client_input->client_socket);
-				return 1;
+				closesocket(client_socket);
+				return ERROR_CODE;
 			}
 			if (wait_for_response)
 			{
@@ -349,6 +354,7 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			}
 		}
 	}
+	return ERROR_CODE;
 
 }
 
@@ -440,7 +446,6 @@ int server_send_response(int type,int client_ind)
 				g_game_state = GAME_END_STATE;
 				
 			}
-			end_text[strlen(end_text)] = MASSGAE_END;
 			int params_len = MAX_USERNAME_LEN + END_MSG_MAX_LEN + 2;//+2*PRAMS_SEPARATE;
 			if (BOOM_VLUE == g_player_num_arr[client_ind])
 				params_len += strlen(BOOM_TEXT);
@@ -449,22 +454,35 @@ int server_send_response(int type,int client_ind)
 			message_len = MASSGAE_TYPE_MAX_LEN + 1 + params_len;//for add \n
 			char* p_prams_string_buffer = (char*)malloc(sizeof(char) * params_len);
 			if (BOOM_VLUE == g_player_num_arr[client_ind])
-				sprintf_s(p_prams_string_buffer, params_len, "%s%c%s%c%s", g_client_name_arr[client_ind], PRAMS_SEPARATE, BOOM_TEXT, PRAMS_SEPARATE, end_text);
+				sprintf_s(p_prams_string_buffer, params_len, "%s%c%s%c%s%c", g_client_name_arr[client_ind], PRAMS_SEPARATE, BOOM_TEXT, PRAMS_SEPARATE, end_text, MASSGAE_END);
 			else
 			{
-				sprintf_s(p_prams_string_buffer, params_len, "%s%c%d%c%s", g_client_name_arr[client_ind], PRAMS_SEPARATE, g_player_num_arr[client_ind], PRAMS_SEPARATE, end_text);
+				sprintf_s(p_prams_string_buffer, params_len, "%s%c%d%c%s%c", g_client_name_arr[client_ind], PRAMS_SEPARATE, g_player_num_arr[client_ind], PRAMS_SEPARATE, end_text, MASSGAE_END);
 			}
 			send_message_to_client(message_len, other_player_ind, GAME_VIEW, p_prams_string_buffer, FALSE);
 			if (GAME_END_STATE == g_game_state)
 			{
 				message_len = MASSGAE_TYPE_MAX_LEN + 1 + MAX_USERNAME_LEN;
-				send_message_to_client(message_len, client_ind, GAME_ENDED, g_client_name_arr[other_player_ind], FALSE);
-				send_message_to_client(message_len, other_player_ind, GAME_ENDED, g_client_name_arr[other_player_ind], FALSE);
+				char winner_name[MAX_USERNAME_LEN] = { 0 };
+				sprintf_s(winner_name, MAX_USERNAME_LEN, "%s%c", g_client_name_arr[other_player_ind], MASSGAE_END);
+				send_message_to_client(message_len, client_ind, GAME_ENDED, winner_name, FALSE);
+				send_message_to_client(message_len, other_player_ind, GAME_ENDED, winner_name, FALSE);
 				send_message_to_client(message_len, client_ind, SERVER_MAIN_MENU, NULL, FALSE);
 				send_message_to_client(message_len, other_player_ind, SERVER_MAIN_MENU, NULL, FALSE);
 			}
+			else
+			{
+				message_len = MASSGAE_TYPE_MAX_LEN + 1 + MAX_USERNAME_LEN;
+				char params[1 + MAX_USERNAME_LEN] = { 0 };
+				sprintf_s(params, 1 + MAX_USERNAME_LEN, "%s%c", g_client_name_arr[other_player_ind], MASSGAE_END);
+				send_message_to_client(message_len, client_ind, TURN_SWITCH, params, FALSE);
+				send_message_to_client(message_len, other_player_ind, TURN_SWITCH, params, FALSE);
+				message_len = MASSGAE_TYPE_MAX_LEN + 1;
+				send_message_to_client(message_len, other_player_ind, SERVER_MOVE_REQUEST, NULL, TRUE);
+
+			}
 		}
-		else if(CLIENT_DISCONNECT == type)
+		else if(SERVER_NO_OPPONENTS == type)
 		{
 
 		}
@@ -566,10 +584,6 @@ int read_massage_from_client(char* Str,int client_ind)
 	{
 		//TODO add problem not soportes type
 	}
-	if (CLIENT_VERSUS == type)
-	{
-		g_game_state++;
-	}
 	while (Str[index] != MASSGAE_END)
 	{
 
@@ -619,7 +633,7 @@ int read_massage_from_client(char* Str,int client_ind)
 				}
 				Str[index] = '\0';
 				g_player_num_arr[client_ind] = atoi(Str + start_ind);//human readable
-
+				Str[index] = MASSGAE_END;
 			}
 		}
 		else
@@ -661,7 +675,7 @@ int look_for_seven(int input_num)
 	/// break the number to find if there is seven in it 
 	/// </summary>
 	/// <returns>if condition is true return 1 else return 0</returns>
-	for (int part_num = input_num; part_num < 10; part_num /= 10)
+	for (int part_num = input_num; part_num > 10; part_num /= 10)
 	{
 		if (part_num % 10 == 7)
 		{
@@ -704,7 +718,7 @@ void logic_fun()
 
 void reset_game()
 {
-	g_game_state = 0;
+
 }
 
 void remove_client(int client_id)
