@@ -31,13 +31,14 @@ typedef struct message_cell_s {
 typedef struct thread_input_s {
 	int client_num;
 	SOCKET client_socket;
-	enum thread_mode client_mode;
 }thread_input_t;
 
 HANDLE g_wait_for_client_event[MAX_NUM_PLAYERS] = { NULL };
-char g_player_name_arr[MAX_NUM_PLAYERS][MAX_USERNAME_LEN] = { NULL };
+
+char g_client_name_arr[MAX_NUM_CLIENTS][MAX_USERNAME_LEN] = { NULL };
+char g_log_file_name[MAX_NUM_CLIENTS][MAX_USERNAME_LEN + LOG_FILE_NAME_BASE_LEN] = { 0 };
+
 int  g_player_num_arr[MAX_NUM_PLAYERS] = { 0 };
-int g_num_of_clients = 0;
 int g_game_turn_num= 0;
 int g_game_state = 0;
 BOOL g_server_on = TRUE;
@@ -45,14 +46,19 @@ message_cell_t *gp_recived_massge_hade[MAX_NUM_CLIENTS] = { NULL };
 message_cell_t* gp_massage_to_send_hade[MAX_NUM_CLIENTS] = { NULL };
 
 BOOL g_is_time_out_arr[MAX_NUM_CLIENTS] = { FALSE };
-static HANDLE g_send_semapore_arr[MAX_NUM_CLIENTS] = { NULL };
-static HANDLE g_rcev_semapore_arr[MAX_NUM_CLIENTS] = { NULL };
+static HANDLE g_game_end_semapore_arr[MAX_NUM_CLIENTS] = { NULL };
+static HANDLE g_send_semapore[MAX_NUM_CLIENTS] = { NULL };
+static HANDLE g_hads_mutex[MAX_NUM_CLIENTS] = { NULL };
+static HANDLE g_log_file_mutex[MAX_NUM_CLIENTS] = { NULL };
+
 // Initialize all thread handles to NULL, to mark that they have not been initialized
 HANDLE g_recive_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
 HANDLE g_send_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
 
 thread_input_t g_thread_inputs_arr[MAX_NUM_CLIENTS];
 BOOL g_is_thread_active[MAX_NUM_CLIENTS] = { FALSE };
+BOOL g_player_vs_req[MAX_NUM_PLAYERS] = { FALSE };
+
 BOOL g_start_graceful_shutdown[MAX_NUM_CLIENTS] = { FALSE };
 
 char client_meaasge[NUM_CLIENT_TYPES][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
@@ -62,8 +68,20 @@ SOCKET g_main_socket = INVALID_SOCKET;
 
 //function decleration
 int connect_to_sokcet(int port_num);
+void close_socket(SOCKET socket_to_close);
 static DWORD WINAPI send_to_client_thread(LPVOID t_socket);
-static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters,LPDWORD p_thread_id);
+static DWORD WINAPI recive_from_client_thread(LPVOID t_socket);
+static DWORD WINAPI main_thread(void);
+static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters);
+void graceful_shutdown(SOCKET s, int client_num);
+message_cell_t* add_message_to_cell_arr(char* p_message, int message_len, message_cell_t* p_cell_head, BOOL wait_for_response);
+void init_sync_obj();
+void logic_fun();
+HANDLE create_file_simple(LPCSTR p_file_name, char mode);
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
+int write_to_log(int client_num, const char* p_start_message_str, char* p_buffer, const DWORD buffer_len);
+int create_log_file(int client_num);
+
 int main(int argc, char* argv[])
 {
 	if (argc != NUM_OF_INPUTS + 1)
@@ -71,20 +89,21 @@ int main(int argc, char* argv[])
 		printf("ERROR: Not enough input arguments\n");
 		return ERROR_CODE;
 	}
-	int port_num = argv[PORT_NUM_IND];
+	int port_num = atoi(argv[PORT_NUM_IND]);
 	connect_to_sokcet(port_num);
-	HANDLE main_thread = CreateThreadSimple(main_thread, NULL, NULL);
+	init_sync_obj();
+	HANDLE main_thread_handle = CreateThreadSimple(main_thread, NULL, NULL);
+	while (TRUE)
+	{
+
+	}
 
 }
 
 
-int mainServer(int port_num)
-{
-	// create main thread 
-}
 
 
-static DWORD WINAPI main_thread(LPVOID t_socket)
+static DWORD WINAPI main_thread(void)
 {
 	while (g_server_on)
 	{
@@ -99,32 +118,30 @@ static DWORD WINAPI main_thread(LPVOID t_socket)
 		int client_ind = 0;
 		for (int i = 0; i < MAX_NUM_CLIENTS; i++)
 		{
-			if (!g_is_thread_active[i] )
+			if (!g_is_thread_active[i])
 			{
 				client_ind = i;
 				break;
 			}
 		}
-		//TODO add mutex
-		g_is_thread_active[client_ind] = TRUE;
-		//creats thread input
-		g_thread_inputs_arr[client_ind].client_socket = AcceptSocket; // shallow copy: don't close 
-											  // AcceptSocket, instead close 
-											  // ThreadInputs[Ind] when the
-											  // time comes.
-		//creats send_to_client_thread
-		g_send_thread_handles_arr[client_ind] = CreateThreadSimple(send_to_client_thread, &(g_thread_inputs_arr[client_ind]),NULL);
-		//we asume we dont have more then 3 clients
-		//creats send_to_client_thread
-		g_recive_thread_handles_arr[client_ind] = CreateThreadSimple(recive_from_client_thread, &(g_thread_inputs_arr[client_ind]), NULL);
-		if (g_num_of_clients == MAX_NUM_CLIENTS)
+		if (client_ind == MAX_NUM_CLIENTS)
 		{
 			//TODO send DENIED_SERVE
-
-			printf("No slots available for client, dropping the connection.\n");
 			closesocket(AcceptSocket); //Closing the socket, dropping the connection.
 		}
+		else
+		{
+			g_is_thread_active[client_ind] = TRUE;
+		}
 
+		//TODO add mutex
+		//creats thread input
+		thread_input_t temp_thread_input = { .client_socket = AcceptSocket,.client_num = client_ind };
+		//creats send_to_client_thread
+		g_send_thread_handles_arr[client_ind] = CreateThreadSimple(send_to_client_thread, &temp_thread_input,NULL);
+		//we asume we dont have more then 3 clients
+		//creats send_to_client_thread
+		g_recive_thread_handles_arr[client_ind] = CreateThreadSimple(recive_from_client_thread, &temp_thread_input, NULL);
 
 	}
 }
@@ -231,16 +248,14 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 		}
 		else
 		{
-			add_message_to_cell_arr(AcceptedStr, gp_recived_massge_hade[client_num],FALSE);
-			//release semaphore for next thred
-			ret_val = ReleaseSemaphore(
-				g_rcev_semapore_arr[client_num],
-				1, 		/* Signal that exactly one cell was emptied */
-				&wait_code);
-			if (FALSE == ret_val)
+			int massage_type = read_massage_from_client(AcceptedStr, client_num);
+			int response_type = server_send_response(massage_type, client_num);
+			if(SERVER_DENIED == response_type)
 			{
-				printf("Error when releasing\n");
-				return ERROR_CODE;
+				// close tread 
+				//TODO close threads 
+				g_is_thread_active[client_num] = FALSE;
+
 			}
 		}
 
@@ -260,8 +275,8 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 	while (g_is_thread_active[client_num])
 	{
 
-		wait_code = WaitForSingleObject(g_send_semapore_arr[client_num], INFINITE);
-		if (g_start_graceful_shutdown)
+		wait_code = WaitForSingleObject(g_send_semapore[client_num], INFINITE);
+		if (g_start_graceful_shutdown[client_num])
 		{
 			//try graceful_shutdown 
 			//reset client_event
@@ -285,6 +300,13 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 				printf("Error when waiting for semapore\n");
 				return ERROR_CODE;
 			}
+			BOOL ret_val;
+			wait_code = WaitForSingleObject(g_hads_mutex[client_num], INFINITE);
+			if (WAIT_OBJECT_0 != wait_code)
+			{
+				printf("Error when waiting for mutex\n");
+				return ERROR_CODE;
+			}
 			char* p_massage_to_send = gp_massage_to_send_hade[client_num]->p_message;
 			message_cell_t* p_temp_cell = gp_massage_to_send_hade[client_num]->p_next;
 			BOOL wait_for_response = gp_massage_to_send_hade[client_num]->wait_for_response;
@@ -296,6 +318,12 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			free(p_massage_to_send);
 			free(gp_massage_to_send_hade[client_num]);
 			gp_massage_to_send_hade[client_num] = p_temp_cell;
+			ret_val = ReleaseMutex(g_hads_mutex[client_num]);
+			if (FALSE == ret_val)
+			{
+				printf("unable to release mutex\n");
+				return ERROR_CODE;
+			}
 			//TODO choose one or marge
 			if (SendRes == TRNS_FAILED)
 			{
@@ -342,18 +370,6 @@ int clean_server()
 
 }
 
-void graceful_shutdown(SOCKET socket_to_close)
-{
-	if (NO_ERROR != shutdown(socket_to_close, SD_SEND))
-	{
-		printf(":, error %ld. Ending program.\n", WSAGetLastError());//TODO add print
-		return ERROR_CODE;
-	}
-	//wait for recv 0 
-	//TransferResult_t ReceiveBuffer(char* OutputBuffer, int BytesToReceive, SOCKET sd)
-	//recv()//TODO fixe 
-
-}
 
 int server_send_response(int type,int client_ind)
 {
@@ -365,7 +381,7 @@ int server_send_response(int type,int client_ind)
 		if (CLIENT_REQUEST == type)
 		{
 			//CLIENT_REQUEST
-			if (g_num_of_clients == MAX_NUM_PLAYERS)
+			if (client_ind == MAX_NUM_PLAYERS)
 			{
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
 				send_message_to_client(message_len, client_ind, SERVER_DENIED, NULL, FALSE);
@@ -374,7 +390,6 @@ int server_send_response(int type,int client_ind)
 			}
 			else
 			{
-				g_num_of_clients++;
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
 				send_message_to_client(message_len, client_ind, SERVER_APPROVED, NULL, FALSE);
 				send_message_to_client(message_len, client_ind, SERVER_MAIN_MENU, NULL, FALSE);
@@ -383,22 +398,15 @@ int server_send_response(int type,int client_ind)
 		}
 		else if (CLIENT_VERSUS == type)
 		{
+			g_player_vs_req[client_ind] = TRUE;
 			//TODO wait for another player
 			//both players ask to play
-			if (MAX_NUM_PLAYERS == g_num_of_clients && g_game_state == ONE_PLAYER_REQUST)
+			if(g_is_thread_active[other_player_ind] && !g_player_vs_req[other_player_ind])
 			{
-				wait_res = WaitForSingleObject(g_wait_for_client_event, MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+				wait_res = WaitForSingleObject(g_wait_for_client_event[client_ind], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 			}
-			if (MAX_NUM_PLAYERS != g_num_of_clients || WAIT_TIMEOUT == wait_res)
+			else if (g_player_vs_req[other_player_ind])
 			{
-				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
-				send_message_to_client(message_len, client_ind, SERVER_NO_OPPONENTS, NULL, FALSE);
-				return SERVER_NO_OPPONENTS;
-			}
-			if (TWO_PLAYER_REQUST == g_game_state)
-			{
-				//start game
-				g_game_state = GAME_ON_STATE;
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
 				//send both client GAME_STARTED	
 				send_message_to_client(message_len, client_ind, GAME_STARTED, NULL, FALSE);
@@ -406,12 +414,22 @@ int server_send_response(int type,int client_ind)
 				//TODO make shure g_player_name_arr end with \n or chenge send_message_to_client
 				//we start the game with the player how first connect to server
 				message_len = MASSGAE_TYPE_MAX_LEN + 1 + MAX_USERNAME_LEN;
-				send_message_to_client(message_len, client_ind, TURN_SWITCH, g_player_name_arr[0], FALSE);
-				send_message_to_client(message_len, other_player_ind, TURN_SWITCH, g_player_name_arr[0], FALSE);
+				char params[1 + MAX_USERNAME_LEN] = { 0 };
+				sprintf_s(params, 1 + MAX_USERNAME_LEN, "%s%c", g_client_name_arr[0], MASSGAE_END);
+				send_message_to_client(message_len, client_ind, TURN_SWITCH, params, FALSE);
+				send_message_to_client(message_len, other_player_ind, TURN_SWITCH, params, FALSE);
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;
 				send_message_to_client(message_len, 0, SERVER_MOVE_REQUEST, NULL, TRUE);
 				return GAME_STARTED;
 			}
+			if (!g_is_thread_active[other_player_ind] || WAIT_TIMEOUT == wait_res)
+			{
+				g_player_vs_req[client_ind] = FALSE;
+				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
+				send_message_to_client(message_len, client_ind, SERVER_NO_OPPONENTS, NULL, FALSE);
+				return SERVER_NO_OPPONENTS;
+			}
+
 		}
 		else if (CLIENT_PLAYER_MOVE == type)
 		{
@@ -431,17 +449,17 @@ int server_send_response(int type,int client_ind)
 			message_len = MASSGAE_TYPE_MAX_LEN + 1 + params_len;//for add \n
 			char* p_prams_string_buffer = (char*)malloc(sizeof(char) * params_len);
 			if (BOOM_VLUE == g_player_num_arr[client_ind])
-				sprintf_s(p_prams_string_buffer, params_len, "%s%c%s%c%s", g_player_name_arr[client_ind], PRAMS_SEPARATE, BOOM_TEXT, PRAMS_SEPARATE, end_text);
+				sprintf_s(p_prams_string_buffer, params_len, "%s%c%s%c%s", g_client_name_arr[client_ind], PRAMS_SEPARATE, BOOM_TEXT, PRAMS_SEPARATE, end_text);
 			else
 			{
-				sprintf_s(p_prams_string_buffer, params_len, "%s%c%d%c%s", g_player_name_arr[client_ind], PRAMS_SEPARATE, g_player_num_arr[client_ind], PRAMS_SEPARATE, end_text);
+				sprintf_s(p_prams_string_buffer, params_len, "%s%c%d%c%s", g_client_name_arr[client_ind], PRAMS_SEPARATE, g_player_num_arr[client_ind], PRAMS_SEPARATE, end_text);
 			}
 			send_message_to_client(message_len, other_player_ind, GAME_VIEW, p_prams_string_buffer, FALSE);
 			if (GAME_END_STATE == g_game_state)
 			{
 				message_len = MASSGAE_TYPE_MAX_LEN + 1 + MAX_USERNAME_LEN;
-				send_message_to_client(message_len, client_ind, GAME_ENDED, g_player_name_arr[other_player_ind], FALSE);
-				send_message_to_client(message_len, other_player_ind, GAME_ENDED, g_player_name_arr[other_player_ind], FALSE);
+				send_message_to_client(message_len, client_ind, GAME_ENDED, g_client_name_arr[other_player_ind], FALSE);
+				send_message_to_client(message_len, other_player_ind, GAME_ENDED, g_client_name_arr[other_player_ind], FALSE);
 				send_message_to_client(message_len, client_ind, SERVER_MAIN_MENU, NULL, FALSE);
 				send_message_to_client(message_len, other_player_ind, SERVER_MAIN_MENU, NULL, FALSE);
 			}
@@ -462,31 +480,43 @@ void init_sync_obj()
 	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
 	{
 		//create semapore
-		g_send_semapore_arr[i] = CreateSemaphore(
+		g_send_semapore[i] = CreateSemaphore(
 			NULL,	/* Default security attributes */
 			0,		/* Initial Count - */
 			MAX_MESSAGES_IN_BUF,		/* Maximum Count */
 			NULL); /* un-named */
-		if (NULL == g_send_semapore_arr)
+		if (NULL == g_send_semapore)
 		{
 			printf("error when Create Semaphore\n");
 		}
-		g_rcev_semapore_arr[i] = CreateSemaphore(
-			NULL,	/* Default security attributes */
-			0,		/* Initial Count - */
-			MAX_MESSAGES_IN_BUF,		/* Maximum Count */
-			NULL); /* un-named */
-		if (NULL == g_send_semapore_arr)
+		g_hads_mutex[i] = CreateMutex(
+			NULL,	/* default security attributes */
+			FALSE,	/* initially not owned */
+			NULL);	/* unnamed mutex */
+		if (NULL == g_hads_mutex[i])
 		{
 			printf("error when Create Semaphore\n");
+			//TODO add error handel
+			return ERROR_CODE;
 		}
+		g_log_file_mutex[i] = CreateMutex(
+			NULL,	/* default security attributes */
+			FALSE,	/* initially not owned */
+			NULL);	/* unnamed mutex */
+		if (NULL == g_log_file_mutex[i])
+		{
+			printf("error when Create Semaphore\n");
+			//TODO add error handel
+			return ERROR_CODE;
+		}
+		
 
 	}
 	for (int i = 0; i < MAX_NUM_PLAYERS; i++)
 	{
 		//create event to track time out
 		/* Parameters for CreateEvent */
-		static const char P_EVENT_NAME[EVENT_NAME_LEN] = { 0 };
+		char P_EVENT_NAME[EVENT_NAME_LEN] = { 0 };
 
 		sprintf_s(P_EVENT_NAME, EVENT_NAME_LEN, "WAIT_FOR_7_BOOM_CLIENT_EVENT%d",i);
 
@@ -507,6 +537,7 @@ void init_sync_obj()
 	}
 
 
+
 }
 
 // TODO make more general
@@ -516,7 +547,7 @@ int read_massage_from_client(char* Str,int client_ind)
 	int type = 0;
 	char massage_type[MASSGAE_TYPE_MAX_LEN] = { 0 };
 	//if(strlen(Str)) TODO is can be not str?
-	while (Str[index] != MASSGAE_TYPE_SEPARATE)
+	while (Str[index] != MASSGAE_TYPE_SEPARATE && Str[index] != MASSGAE_END)
 	{
 		massage_type[index] = Str[index];
 		index++;
@@ -525,10 +556,15 @@ int read_massage_from_client(char* Str,int client_ind)
 	//TODO to catlog massge
 	for (int i = 0; i < NUM_CLIENT_TYPES; i++)
 	{
-		if (STRINGS_ARE_EQUAL(client_meaasge[client_ind][i], massage_type))
+		if (STRINGS_ARE_EQUAL(client_meaasge[i], massage_type))
 		{
 			type = i;
+			break;
 		}
+	}
+	if (NUM_CLIENT_TYPES == type)
+	{
+		//TODO add problem not soportes type
 	}
 	if (CLIENT_VERSUS == type)
 	{
@@ -540,22 +576,22 @@ int read_massage_from_client(char* Str,int client_ind)
 		// has name parmeter
 		if (CLIENT_REQUEST == type )
 		{
+			index++;
 			if (client_ind < MAX_NUM_PLAYERS)
 			{
 				int name_ind = 0;
 				while (Str[index] != PRAMS_SEPARATE && Str[index] != MASSGAE_END)
 				{
-					g_player_name_arr[client_ind][name_ind] = Str[index];
+					g_client_name_arr[client_ind][name_ind] = Str[index];
 					index++;
 					name_ind++;
 				}
 				//TODO is the username includes \0
-				g_player_name_arr[client_ind][name_ind] = '\0';
-				//reset wait for client event
-				WaitForSingleObject(g_wait_for_client_event[client_ind], 0);//event on ato reset
+				g_client_name_arr[client_ind][name_ind] = '\0';
+				create_log_file(client_ind);
 			}
 		}
-		if(CLIENT_PLAYER_MOVE == type)
+		else if(CLIENT_PLAYER_MOVE == type)
 		{
 			index++;
 			int start_ind = index;
@@ -586,8 +622,11 @@ int read_massage_from_client(char* Str,int client_ind)
 
 			}
 		}
-
-		index++;
+		else
+		{
+			//TODO add problem not soportes params for spesific type
+		}
+		write_to_log(client_ind, LOG_REC, Str, get_message_len(Str));
 	}
 	return type;
 }
@@ -635,12 +674,14 @@ int look_for_seven(int input_num)
 void logic_fun()
 {
 	//wait for clients requests
-	DWORD client_ind;
-	client_ind = WaitForMultipleObjects(g_num_of_clients,// num of objects to wait for
-		g_rcev_semapore_arr, //array of handels to wait for
-		FALSE, // wait until one of the objects became signaled
-		INFINITE // no time out
-	);
+	// TODO remove next part
+	//DWORD client_ind;
+	//client_ind = WaitForMultipleObjects(g_num_of_clients,// num of objects to wait for
+	//	g_rcev_semapore, //array of handels to wait for
+	//	FALSE, // wait until one of the objects became signaled
+	//	INFINITE // no time out
+	//);
+	int client_ind = 0;
 	if (WAIT_FAILED == client_ind)
 	{
 
@@ -676,7 +717,7 @@ void graceful_shutdown(SOCKET s, int client_num)
 	BOOL ret_val;
 	g_start_graceful_shutdown[client_num] = TRUE;
 	ret_val = ReleaseSemaphore(
-		g_send_semapore_arr[client_num],
+		g_send_semapore[client_num],
 		1, 		/* Signal that exactly one cell was emptied */
 		&wait_res);
 	if (FALSE == ret_val)
@@ -684,13 +725,20 @@ void graceful_shutdown(SOCKET s, int client_num)
 		printf("Error when releasing\n");
 		return ERROR_CODE;
 	}
-
+	//if (NO_ERROR != shutdown(socket_to_close, SD_SEND))
+	//{
+	//	printf(":, error %ld. Ending program.\n", WSAGetLastError());//TODO add print
+	//	return ERROR_CODE;
+	//}
+	//wait for recv 0 
+	//TransferResult_t ReceiveBuffer(char* OutputBuffer, int BytesToReceive, SOCKET sd)
+	//recv()//TODO fixe 
 
 
 }
 
 
-message_cell_t* add_message_to_cell_arr(char *p_str, message_cell_t *p_cell_head,BOOL wait_for_response)
+message_cell_t* add_message_to_cell_arr(char* p_message, int message_len, message_cell_t* p_cell_head, BOOL wait_for_response)
 {
 	/// <summary>
 	/// 
@@ -701,12 +749,26 @@ message_cell_t* add_message_to_cell_arr(char *p_str, message_cell_t *p_cell_head
 	/// <returns></returns>
 	message_cell_t* p_temp_cell = p_cell_head;
 	message_cell_t* p_new_cell = (message_cell_t*)malloc(sizeof(message_cell_t));
-	if(NULL==p_new_cell)
+	if (NULL == p_new_cell)
 	{
+		printf("unable to alocate memory for message_cell\n");
+		return NULL;
 	}
 	p_new_cell->wait_for_response = wait_for_response;
 	p_new_cell->p_next = NULL;
-	p_new_cell->p_message = p_str;
+	char* p_temp_buf = (char*)malloc(sizeof(char) * message_len);
+	if (NULL == p_temp_buf)
+	{
+		free(p_new_cell);
+		printf("unable to alocate memory for message_cell\n");
+		return NULL;
+	}
+	//copy message
+	for (int ind = 0; ind < message_len; ind++)
+	{
+		p_temp_buf[ind] = p_message[ind];
+	}
+	p_new_cell->p_message = p_temp_buf;
 
 	if (NULL == p_temp_cell)
 	{
@@ -739,6 +801,8 @@ int send_message_to_client(int msg_len,int client_ind,int type,char  *p_params, 
 	 char* p_message_to_add = (char*)malloc(sizeof(char) * msg_len);
 	 if (NULL == p_message_to_add)
 	 {
+		 printf("unable to alocate memory for message to client\n");
+		 return ERROR_CODE;
 		 //TODO add erorr
 	 }
 	 int last_ind = strlen(server_massage[type]);
@@ -751,7 +815,8 @@ int send_message_to_client(int msg_len,int client_ind,int type,char  *p_params, 
 	{
 		p_message_to_add[last_ind] = MASSGAE_TYPE_SEPARATE;//TODO make shure it set the right char
 		last_ind++;
-		for (int ind = 0; p_params[ind] != MASSGAE_END; ind++)
+		int ind = 0;
+		for (; p_params[ind] != MASSGAE_END; ind++)
 		{
 			p_message_to_add[last_ind + ind] = p_params[ind];
 			if (last_ind + ind == msg_len)
@@ -759,11 +824,27 @@ int send_message_to_client(int msg_len,int client_ind,int type,char  *p_params, 
 				//TODO error no MASSGAE_END
 			}
 		}
+		p_message_to_add[last_ind + ind] = MASSGAE_END;
 		//relase params
 	}
-	gp_massage_to_send_hade[client_ind] = add_message_to_cell_arr(p_message_to_add, gp_massage_to_send_hade[client_ind], wait_for_response);
+
+	write_to_log(client_ind, LOG_SENT, p_message_to_add, get_message_len(p_message_to_add));
+	wait_res = WaitForSingleObject(g_hads_mutex[client_ind], INFINITE);
+	if (WAIT_OBJECT_0 != wait_res)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	gp_massage_to_send_hade[client_ind] = add_message_to_cell_arr(p_message_to_add, get_message_len(p_message_to_add),gp_massage_to_send_hade[client_ind], wait_for_response);
+	ret_val = ReleaseMutex(g_hads_mutex[client_ind]);
+	if (FALSE == ret_val)
+	{
+		printf("unable to release mutex\n");
+		return ERROR_CODE;
+	}
+	free(p_message_to_add);
 	ret_val = ReleaseSemaphore(
-		g_send_semapore_arr[client_ind],
+		g_send_semapore[client_ind],
 		1, 		/* Signal that exactly one cell was emptied */
 		&wait_res);
 	if (FALSE == ret_val)
@@ -775,8 +856,7 @@ int send_message_to_client(int msg_len,int client_ind,int type,char  *p_params, 
 }
 
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
-	LPVOID p_thread_parameters,
-	LPDWORD p_thread_id)
+	LPVOID p_thread_parameters)
 {
 	/// <summary>
 	///create a thread and return the handle
@@ -793,13 +873,6 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 		//TODO free resource
 		exit(ERROR_CODE);
 	}
-	if (NULL == p_thread_id)
-	{
-		printf("Error when creating a thread");
-		printf("Received null pointer");
-		//TODO free resource
-		exit(ERROR_CODE);
-	}
 
 	thread_handle = CreateThread(
 		NULL,                /*  default security attributes */
@@ -807,7 +880,7 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 		p_start_routine,     /*  thread function */
 		p_thread_parameters, /*  argument to thread function */
 		0,                   /*  use default creation flags */
-		p_thread_id);        /*  returns the thread identifier */
+		NULL);        /*  returns the thread identifier */
 	if (NULL == thread_handle)
 	{
 		printf("Couldn't create thread\n");
@@ -815,4 +888,151 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 		exit(ERROR_CODE);
 	}
 	return thread_handle;
+}
+
+int create_log_file(int client_num)
+{
+	//sprintf_s(g_log_file_name[client_num], MAX_USERNAME_LEN + LOG_FILE_NAME_BASE_LEN, "Client_log_%s.txt", g_client_name_arr[client_num]);
+	sprintf_s(g_log_file_name[client_num], MAX_USERNAME_LEN + LOG_FILE_NAME_BASE_LEN, "Thread_log_%s.txt", g_client_name_arr[client_num]);
+	//create empty log file, overwrite if exist
+	HANDLE h_file = create_file_simple(g_log_file_name[client_num], 'd');
+	if (INVALID_HANDLE_VALUE == h_file)
+	{
+		printf("unable to crate log file: %s\n", g_log_file_name[client_num]);
+		return ERROR_CODE;
+	}
+	CloseHandle(h_file);
+	return SUCCESS_CODE;
+
+}
+int write_to_log(int client_num, const char* p_start_message_str, char* p_buffer, const DWORD buffer_len)
+{
+	DWORD wait_res = 0;
+	BOOL ret_val;
+	wait_res = WaitForSingleObject(g_log_file_mutex[client_num], INFINITE);
+	if (WAIT_OBJECT_0 != wait_res)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	int num_byte_written = 0;
+	num_byte_written = write_to_file(g_log_file_name[client_num], p_start_message_str, strlen(p_start_message_str));
+	ret_val = ReleaseMutex(g_log_file_mutex[client_num]);
+	if (FALSE == ret_val)
+	{
+		printf("unable to release mutex\n");
+		return ERROR_CODE;
+	}
+	if (strlen(p_start_message_str) != num_byte_written)
+	{
+		printf("problem when try to write to log file the line %s%s\n", p_start_message_str, p_buffer);
+		return ERROR_CODE;
+	}
+	wait_res = WaitForSingleObject(g_log_file_mutex[client_num], INFINITE);
+	if (WAIT_OBJECT_0 != wait_res)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	num_byte_written = write_to_file(g_log_file_name[client_num], p_buffer, buffer_len);
+	ret_val = ReleaseMutex(g_log_file_mutex[client_num]);
+	if (FALSE == ret_val)
+	{
+		printf("unable to release mutex\n");
+		return ERROR_CODE;
+	}
+	if (buffer_len != num_byte_written)
+	{
+		printf("problem when try to write to log file the line %s%s\n", p_start_message_str, p_buffer);
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+}
+
+DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
+{
+	/// <summary>
+	///  write message from p_buffer in len buffer_len to file 
+	/// </summary>
+	/// <param name="file_name">path to file to write the buffer</param>
+	/// <param name="p_buffer">pointer to buffer</param>
+	/// <param name="buffer_len"> the length of the buffer</param>
+	/// <returns> num of bytes written to file</returns>
+	HANDLE h_file = create_file_simple(p_file_name, 'w');
+	DWORD last_error;
+	DWORD n_written = 0;
+	if (INVALID_HANDLE_VALUE == h_file)
+	{
+		return n_written;
+	}
+	//move file pointer in ofset
+	SetFilePointer(
+		h_file,	//handle to file
+		0, // number of bytes to move the file pointer
+		NULL, // 
+		FILE_END);
+	if (FALSE == WriteFile(h_file,
+		p_buffer,
+		buffer_len,
+		&n_written, NULL))
+	{
+		last_error = GetLastError();
+		printf("Unable to write to file, error: %ld\n", last_error);
+	}
+	CloseHandle(h_file);
+	return n_written;
+}
+
+HANDLE create_file_simple(LPCSTR p_file_name, char mode)
+{
+	/// <summary>
+	/// use CreateFile with default params for read or write and return the handle
+	/// </summary>
+	/// <param name="file_name">file path</param>
+	/// <param name="mode">mode : 'r'/'R' for read acsses 'w'/'W' for write </param>
+	/// <returns>handle to file</returns>
+	HANDLE h_file;
+	DWORD last_error;
+	DWORD acsees;
+	DWORD share;
+	DWORD creation_disposition;
+	switch (mode)
+	{
+	case 'r': case 'R':
+		acsees = GENERIC_READ;  // open for reading
+		share = FILE_SHARE_READ; // share for reading
+		creation_disposition = OPEN_EXISTING; // existing file only
+		break;
+	case 'w':case'W':
+		acsees = GENERIC_WRITE;
+		share = FILE_SHARE_WRITE;
+		creation_disposition = OPEN_ALWAYS; // open if existe or create new if not
+		break;
+	case 'd':case'D':
+		acsees = GENERIC_WRITE;
+		share = FILE_SHARE_WRITE;
+		creation_disposition = CREATE_ALWAYS; // overwrite if existe or create new if not 
+		break;
+	default:
+		acsees = GENERIC_READ;  // open for reading
+		share = FILE_SHARE_READ; // share for reading
+		creation_disposition = OPEN_EXISTING;// existing file only
+	};
+	h_file = CreateFile(p_file_name,  // file to open
+		acsees,
+		share,
+		NULL,                  // default security
+		creation_disposition,
+		FILE_ATTRIBUTE_NORMAL, // normal file
+		NULL);
+	if (h_file == INVALID_HANDLE_VALUE)
+	{
+		printf("Unable to open file %s\n", p_file_name);
+	}
+	last_error = GetLastError();
+	if (last_error == ERROR_FILE_NOT_FOUND)
+	{
+		printf("did not find file %s\n", p_file_name);
+	}
+	return h_file;
 }

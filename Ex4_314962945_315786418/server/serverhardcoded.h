@@ -7,6 +7,10 @@
 #define MAX_NUM_CLIENTS 3
 #define MAX_NUM_PLAYERS 2
 #define EVENT_NAME_LEN 30
+#define LOG_FILE_NAME_BASE_LEN 20
+#define PLAYER_NOT_CONNECT -1
+#define LOG_REC "received from client-"
+#define LOG_SENT "sent to client-"
 
 #endif // !SERVER_HARD_CODED_H
 
