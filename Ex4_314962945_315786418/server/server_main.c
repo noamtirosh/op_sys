@@ -21,6 +21,7 @@ enum thread_mode { RECIVE, TRANSMIT};
 enum client_types{ CLIENT_REQUEST,CLIENT_VERSUS,CLIENT_PLAYER_MOVE,CLIENT_DISCONNECT};
 enum server_types{ SERVER_APPROVED,SERVER_DENIED,SERVER_MAIN_MENU,GAME_STARTED,TURN_SWITCH,SERVER_MOVE_REQUEST,GAME_ENDED,SERVER_NO_OPPONENTS,GAME_VIEW,SERVER_OPPONENT_OUT};
 enum game_state { NO_REQUEST_STATE, ONE_PLAYER_REQUST, TWO_PLAYER_REQUST, GAME_ON_STATE, GAME_END_STATE};
+enum release_stage { NOT_NEED, RELEASE_SOCKET, RELEASE_SYNC, RELEASE_THREADS, RELEASE_LINK_LIST, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
 
 typedef struct message_cell_s {
 	struct message_cell_s* p_next;
@@ -45,13 +46,14 @@ BOOL g_server_on = TRUE;
 message_cell_t *gp_recived_massge_hade[MAX_NUM_CLIENTS] = { NULL };
 message_cell_t* gp_massage_to_send_hade[MAX_NUM_CLIENTS] = { NULL };
 
-BOOL g_is_time_out_arr[MAX_NUM_CLIENTS] = { FALSE };
+BOOL g_is_time_out[MAX_NUM_CLIENTS] = { FALSE };
 static HANDLE g_game_end_semapore_arr[MAX_NUM_CLIENTS] = { NULL };
 static HANDLE g_send_semapore[MAX_NUM_CLIENTS] = { NULL };
 static HANDLE g_hads_mutex[MAX_NUM_CLIENTS] = { NULL };
 static HANDLE g_log_file_mutex[MAX_NUM_CLIENTS] = { NULL };
 
 // Initialize all thread handles to NULL, to mark that they have not been initialized
+HANDLE g_main_thread_handle = NULL;
 HANDLE g_recive_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
 HANDLE g_send_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
 
@@ -65,22 +67,29 @@ char client_meaasge[NUM_CLIENT_TYPES][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST"
 char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 
 SOCKET g_main_socket = INVALID_SOCKET;
+SOCKET g_client_socket[MAX_NUM_CLIENTS] = { INVALID_SOCKET };
+
+
 
 //function decleration
 int connect_to_sokcet(int port_num);
-void close_socket(SOCKET socket_to_close);
-static DWORD WINAPI send_to_client_thread(LPVOID t_socket);
-static DWORD WINAPI recive_from_client_thread(LPVOID t_socket);
-static DWORD WINAPI main_thread(void);
+int close_socket(SOCKET socket_to_close);
+static DWORD WINAPI send_to_client_thread(int* t_socket);
+static DWORD WINAPI recive_from_client_thread(int* t_socket);
+static DWORD WINAPI socket_thread(void);
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters);
-void graceful_shutdown(SOCKET s, int client_num);
+int graceful_shutdown(SOCKET s, int client_num);
 message_cell_t* add_message_to_cell_arr(char* p_message, int message_len, message_cell_t* p_cell_head, BOOL wait_for_response);
-void init_sync_obj();
+int init_sync_obj();
+int init_socket_thread();
 void logic_fun();
 HANDLE create_file_simple(LPCSTR p_file_name, char mode);
 DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
 int write_to_log(int client_num, const char* p_start_message_str, char* p_buffer, const DWORD buffer_len);
 int create_log_file(int client_num);
+int close_sync_object();
+
+
 
 int main(int argc, char* argv[])
 {
@@ -92,7 +101,7 @@ int main(int argc, char* argv[])
 	int port_num = atoi(argv[PORT_NUM_IND]);
 	connect_to_sokcet(port_num);
 	init_sync_obj();
-	HANDLE main_thread_handle = CreateThreadSimple(main_thread, NULL, NULL);
+	init_socket_thread();
 	while (TRUE)
 	{
 
@@ -103,11 +112,15 @@ int main(int argc, char* argv[])
 
 
 
-static DWORD WINAPI main_thread(void)
+static DWORD WINAPI socket_thread(void)
 {
 	while (g_server_on)
 	{
 		SOCKET AcceptSocket = accept(g_main_socket, NULL, NULL);
+		if (!g_server_on)
+		{
+			return SUCCESS_CODE;
+		}
 		if (AcceptSocket == INVALID_SOCKET)
 		{
 			printf("Accepting connection with client failed, error %ld\n", WSAGetLastError());
@@ -132,90 +145,35 @@ static DWORD WINAPI main_thread(void)
 		else
 		{
 			g_is_thread_active[client_ind] = TRUE;
+			g_client_socket[client_ind] = AcceptSocket;
 		}
 
 		//TODO add mutex
-		//creats thread input
-		thread_input_t temp_thread_input = { .client_socket = AcceptSocket,.client_num = client_ind };
 		//creats send_to_client_thread
-		g_send_thread_handles_arr[client_ind] = CreateThreadSimple(send_to_client_thread, &temp_thread_input,NULL);
+		g_send_thread_handles_arr[client_ind] = CreateThreadSimple(send_to_client_thread, &client_ind,NULL);
+		if (NULL == g_send_thread_handles_arr[client_ind])
+		{
+			printf("problem when try to create thread for client\n");
+			return ERROR_CODE;
+		}
 		//we asume we dont have more then 3 clients
 		//creats send_to_client_thread
-		g_recive_thread_handles_arr[client_ind] = CreateThreadSimple(recive_from_client_thread, &temp_thread_input, NULL);
-
+		g_recive_thread_handles_arr[client_ind] = CreateThreadSimple(recive_from_client_thread, &client_ind, NULL);
+		if (NULL == g_send_thread_handles_arr[client_ind])
+		{
+			printf("problem when try to create thread for client\n");
+			return ERROR_CODE;
+		}
 	}
+	return SUCCESS_CODE;
+
 }
 
-
-int connect_to_sokcet(int port_num)
-{
-	unsigned long Address;
-	SOCKADDR_IN service;
-	int bindRes;
-	int ListenRes;
-
-	// Initialize Winsock.
-	WSADATA wsaData;
-	int StartupRes = WSAStartup(MAKEWORD(2, 2), &wsaData);
-
-	if (StartupRes != NO_ERROR)
-	{
-		printf("error %ld at WSAStartup( ), ending program.\n", WSAGetLastError());
-		// Tell the user that we could not find a usable WinSock DLL.                                  
-		return ERROR_CODE;
-	}
-
-	/* The WinSock DLL is acceptable. Proceed. */
-
-// Create a socket.    
-	g_main_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-	if (g_main_socket == INVALID_SOCKET)
-	{
-		printf("Error at socket( ): %ld\n", WSAGetLastError());
-		clean_server();
-	}
-	// Bind the socket.
-	// Create a sockaddr_in object and set its values.
-	// Declare variables
-	Address = inet_addr(SERVER_ADDRESS_STR);
-	if (Address == INADDR_NONE)
-	{
-		printf("The string \"%s\" cannot be converted into an ip address. ending program.\n",
-			SERVER_ADDRESS_STR);
-		close_socket(g_main_socket);
-		clean_server();
-	}
-	service.sin_family = AF_INET;
-	service.sin_addr.s_addr = Address;
-	service.sin_port = htons(port_num); //The htons function converts a u_short from host to TCP/IP network byte order 
-									   //( which is big-endian ).
-
-	// Call the bind function, passing the created socket and the sockaddr_in structure as parameters. 
-	// Check for general errors.
-	bindRes = bind(g_main_socket, (SOCKADDR*)&service, sizeof(service));
-	if (bindRes == SOCKET_ERROR)
-	{
-		printf("bind( ) failed with error %ld. Ending program\n", WSAGetLastError());
-		close_socket(g_main_socket);
-		clean_server();
-	}
-
-	// Listen on the Socket.
-	ListenRes = listen(g_main_socket, SOMAXCONN);
-	if (ListenRes == SOCKET_ERROR)
-	{
-		printf("Failed listening on socket, error %ld.\n", WSAGetLastError());
-		close_socket(g_main_socket);
-		clean_server();
-	}
-}
 //Reading data coming from the server
-static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
+static DWORD WINAPI recive_from_client_thread(int *t_socket)
 {
-	thread_input_t* p_current_client_input = (thread_input_t*)t_socket;
-	int client_num = p_current_client_input->client_num;
-	SOCKET client_socket = p_current_client_input->client_socket;
+	int client_num = *t_socket;
+	SOCKET client_socket = g_client_socket[client_num];
 
 	TransferResult_t RecvRes;
 	while (g_is_thread_active[client_num])
@@ -227,30 +185,32 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 		//TODO choose one or marge
 		if (RecvRes == TRNS_FAILED)
 		{
-			printf("Socket error while trying to write data to socket\n");
-			return 0x555;
-		}
-		if (RecvRes == TRNS_FAILED)
-		{
-			printf("Service socket error while writing, closing thread.\n");
-			closesocket(client_socket);
-			return 1;
+			if (NULL != AcceptedStr)
+				free(AcceptedStr);
+			printf("Socket error while trying to read data from socket\n");
+			return ERROR_CODE;
 		}
 		else if (RecvRes == TRNS_DISCONNECTED)
 		{
-			if (g_is_thread_active[client_num])
+			if (NULL != AcceptedStr)
+				free(AcceptedStr);
+			if (!g_start_graceful_shutdown[client_num])
 			{
 				g_is_thread_active[client_num] = FALSE;
 				//TODO send final transmssion
 				shutdown(client_socket, SD_SEND);//will stop sending info
 			}
-			closesocket(client_socket);
-			printf("Server closed connection. Bye!\n");
-			return TRNS_DISCONNECTED;
+			if (close_socket(client_socket))
+				return ERROR_CODE;
+			//TODO send chenge text transmssion
+			//TODO do we need to print someting?
+			return SUCCESS_CODE;
 		}
 		else
 		{
 			int massage_type = read_massage_from_client(AcceptedStr, client_num);
+			if (NULL != AcceptedStr)
+				free(AcceptedStr);
 			int response_type = server_send_response(massage_type, client_num);
 			if(CLIENT_DISCONNECT == massage_type)
 			{
@@ -267,14 +227,12 @@ static DWORD WINAPI recive_from_client_thread(LPVOID t_socket)
 }
 
 //Sending data to the server
-static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
+static DWORD WINAPI send_to_client_thread(int *t_socket)
 {
-	thread_input_t* p_current_client_input = (thread_input_t*)t_socket;
-	int client_num = p_current_client_input->client_num;
-	SOCKET client_socket = p_current_client_input->client_socket;
+	int client_num =  *t_socket;
+	SOCKET client_socket = g_client_socket[client_num];
 	TransferResult_t SendRes;
 	DWORD wait_code;
-
 	while (g_is_thread_active[client_num])
 	{
 
@@ -285,16 +243,28 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			//reset client_event
 			wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);
 			shutdown(client_socket, SD_SEND);//will stop sending info
-			wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
-			//wait for the server respond
-			if (WAIT_TIMEOUT == wait_code)
+			wait_code = WaitForSingleObject(g_recive_thread_handles_arr[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+			//wait for client  shutdown response
+			if (WAIT_OBJECT_0 != wait_code)
 			{
-				g_is_time_out_arr[client_num] = TRUE;
-				printf("server is not rsponding error while trying to write data to socket\n");
-				//TODO close graceful
+				g_is_time_out[client_num] = TRUE;
+				printf("client is not rsponding to graceful_shutdown\n");
+				return ERROR_CODE;
 			}
-			closesocket(client_socket);
-			g_is_thread_active[client_num] = FALSE;
+			else
+			{
+				DWORD exit_code;
+				if (!GetExitCodeThread(g_recive_thread_handles_arr[client_num], &exit_code))
+				{
+					printf("problem when try to get exit code\n");
+					return ERROR_CODE;
+				}
+				if (SUCCESS_CODE == exit_code)
+				{
+					//TODO do we need to print someting?
+					return SUCCESS_CODE;
+				}
+			}
 		}
 		else
 		{
@@ -317,8 +287,18 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 			{				
 				//reset client_event
 				wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
+				if (WAIT_OBJECT_0 != wait_code)
+				{
+					printf("Error when waiting for client_event\n");
+					return ERROR_CODE;
+				}
 			}
 			SendRes = SendString(p_massage_to_send, client_socket);
+			if (TRNS_SUCCEEDED != SendRes)
+			{
+				printf("Socket error while trying to write data to socket\n");
+				return ERROR_CODE;
+			}
 			//free the client massage to send buffer
 			free(p_massage_to_send);
 			free(gp_massage_to_send_hade[client_num]);
@@ -330,25 +310,14 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 				return ERROR_CODE;
 			}
 			//TODO choose one or marge
-			if (SendRes == TRNS_FAILED)
-			{
-				printf("Socket error while trying to write data to socket\n");
-				return 0x555;
-			}
-			if (SendRes == TRNS_FAILED)
-			{
-				printf("Service socket error while writing, closing thread.\n");
-				closesocket(client_socket);
-				return ERROR_CODE;
-			}
 			if (wait_for_response)
 			{
 				wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 				//wait for the server respond
 				if (WAIT_TIMEOUT == wait_code)
 				{
-					g_is_time_out_arr[client_num] = TRUE;
-					printf("server is not rsponding error while trying to write data to socket\n");
+					g_is_time_out[client_num] = TRUE;
+					printf("client is not rsponding error while trying to write data to socket\n");
 					//TODO close graceful
 				}
 			}
@@ -358,24 +327,73 @@ static DWORD WINAPI send_to_client_thread(LPVOID t_socket)
 
 }
 
-void close_socket(SOCKET socket_to_close)
-{
-	if (closesocket(socket_to_close) == SOCKET_ERROR)
-	{
-		printf("Failed to close MainSocket, error %ld. Ending program\n", WSAGetLastError());
-	}
-}
 
-int clean_server()
+int connect_to_sokcet(int port_num)
 {
-	if (WSACleanup() == SOCKET_ERROR)
+	unsigned long Address;
+	SOCKADDR_IN service;
+	int bindRes;
+	int ListenRes;
+
+	// Initialize Winsock.
+	WSADATA wsaData;
+	int StartupRes = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (StartupRes != NO_ERROR)
 	{
-		printf("WSA Cleanup failed:, error %ld. Ending program.\n", WSAGetLastError());
+		printf("error %ld at WSAStartup( ), ending program.\n", WSAGetLastError());
+		// Tell the user that we could not find a usable WinSock DLL.                                  
 		return ERROR_CODE;
 	}
 
-}
+	/* The WinSock DLL is acceptable. Proceed. */
 
+// Create a socket.    
+	g_main_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+	if (g_main_socket == INVALID_SOCKET)
+	{
+		printf("Error at socket( ): %ld\n", WSAGetLastError());
+		clean_server();
+		return ERROR_CODE;
+	}
+	// Bind the socket.
+	// Create a sockaddr_in object and set its values.
+	// Declare variables
+	Address = inet_addr(SERVER_ADDRESS_STR);
+	if (Address == INADDR_NONE)
+	{
+		printf("The string \"%s\" cannot be converted into an ip address. ending program.\n",
+			SERVER_ADDRESS_STR);
+		release_socket();
+		return ERROR_CODE;
+	}
+	service.sin_family = AF_INET;
+	service.sin_addr.s_addr = Address;
+	service.sin_port = htons(port_num); //The htons function converts a u_short from host to TCP/IP network byte order 
+									   //( which is big-endian ).
+
+	// Call the bind function, passing the created socket and the sockaddr_in structure as parameters. 
+	// Check for general errors.
+	bindRes = bind(g_main_socket, (SOCKADDR*)&service, sizeof(service));
+	if (bindRes == SOCKET_ERROR)
+	{
+		printf("bind( ) failed with error %ld. Ending program\n", WSAGetLastError());
+		release_socket();
+		return ERROR_CODE;
+	}
+
+	// Listen on the Socket.
+	ListenRes = listen(g_main_socket, SOMAXCONN);
+	if (ListenRes == SOCKET_ERROR)
+	{
+		printf("Failed listening on socket, error %ld.\n", WSAGetLastError());
+		release_socket();
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+
+
+}
 
 int server_send_response(int type,int client_ind)
 {
@@ -482,18 +500,15 @@ int server_send_response(int type,int client_ind)
 
 			}
 		}
-		else if(SERVER_NO_OPPONENTS == type)
+		else if (SERVER_NO_OPPONENTS == type)
 		{
 
 		}
 
 
-
-
-
 }
 
-void init_sync_obj()
+int init_sync_obj()
 {
 	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
 	{
@@ -506,6 +521,8 @@ void init_sync_obj()
 		if (NULL == g_send_semapore)
 		{
 			printf("error when Create Semaphore\n");
+			return ERROR_CODE;
+
 		}
 		g_hads_mutex[i] = CreateMutex(
 			NULL,	/* default security attributes */
@@ -513,7 +530,7 @@ void init_sync_obj()
 			NULL);	/* unnamed mutex */
 		if (NULL == g_hads_mutex[i])
 		{
-			printf("error when Create Semaphore\n");
+			printf("error when Create mutex\n");
 			//TODO add error handel
 			return ERROR_CODE;
 		}
@@ -523,7 +540,7 @@ void init_sync_obj()
 			NULL);	/* unnamed mutex */
 		if (NULL == g_log_file_mutex[i])
 		{
-			printf("error when Create Semaphore\n");
+			printf("error when Create mutex\n");
 			//TODO add error handel
 			return ERROR_CODE;
 		}
@@ -550,14 +567,26 @@ void init_sync_obj()
 		last_error = GetLastError();
 		if (ERROR_SUCCESS != last_error)
 		{
+			printf("error when Create client_event\n");
+			return ERROR_CODE;
 			//TODO add error handel
 		}
 	}
-
-
+	return SUCCESS_CODE;
 
 }
 
+
+int init_socket_thread()
+{
+	g_main_thread_handle = CreateThreadSimple(socket_thread, NULL, NULL);
+	if (NULL == g_main_thread_handle)
+	{
+		printf("problem when try to create thread for client\n");
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+}
 // TODO make more general
 int read_massage_from_client(char* Str,int client_ind)
 {
@@ -725,8 +754,9 @@ void remove_client(int client_id)
 {
 
 }
-void graceful_shutdown(SOCKET s, int client_num)
+int graceful_shutdown(SOCKET s, int client_num)
 {
+	//if return SUCCESS_CODE both threads are signaled and client socket is 
 	DWORD wait_res;
 	BOOL ret_val;
 	g_start_graceful_shutdown[client_num] = TRUE;
@@ -736,18 +766,31 @@ void graceful_shutdown(SOCKET s, int client_num)
 		&wait_res);
 	if (FALSE == ret_val)
 	{
-		printf("Error when releasing\n");
+		printf("Error when releasing semapore\n");
 		return ERROR_CODE;
 	}
-	//if (NO_ERROR != shutdown(socket_to_close, SD_SEND))
-	//{
-	//	printf(":, error %ld. Ending program.\n", WSAGetLastError());//TODO add print
-	//	return ERROR_CODE;
-	//}
-	//wait for recv 0 
-	//TransferResult_t ReceiveBuffer(char* OutputBuffer, int BytesToReceive, SOCKET sd)
-	//recv()//TODO fixe 
+	wait_res = WaitForSingleObject(g_send_thread_handles_arr[client_num], 2*MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+	if (WAIT_OBJECT_0 == wait_res)
+	{
+		DWORD exit_code;
+		if (!GetExitCodeThread(g_send_thread_handles_arr[client_num], &exit_code))
+		{
+			printf("problem when try to get exit code\n");
+			return ERROR_CODE;
+		}
+		if (SUCCESS_CODE == exit_code)
+		{
+			//TODO do we need to print someting?
+			return SUCCESS_CODE;
+		}
+	}
+	else
+	{
+		g_is_time_out[client_num] = TRUE;
+		printf("client is not rsponding to graceful_shutdown\n");
+		return ERROR_CODE;
 
+	}
 
 }
 
@@ -884,10 +927,8 @@ static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,
 	{
 		printf("Error when creating a thread");
 		printf("Received null pointer");
-		//TODO free resource
-		exit(ERROR_CODE);
+		return NULL;
 	}
-
 	thread_handle = CreateThread(
 		NULL,                /*  default security attributes */
 		0,                   /*  use default stack size */
@@ -1050,3 +1091,194 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 	}
 	return h_file;
 }
+
+int release_source(int stage)
+{
+	int release_result = SUCCESS_CODE;
+	switch (stage)
+	{
+	case RELEASE_LINK_LIST:
+		release_result += relase_link_list();
+	case RELEASE_THREADS:
+		release_result += close_thread();
+	case RELEASE_SYNC:
+		release_result += close_sync_object();
+	case RELEASE_SOCKET:
+		release_result += release_socket();
+	case NOT_NEED:
+		break;
+	}
+	if (SUCCESS_CODE == release_result)
+		return SUCCESS_CODE;
+	return ERROR_CODE;
+}
+
+int close_sync_object()
+{
+	/// <summary>
+	/// this code will close all the handles
+	/// </summary>
+	/// <returns></returns>
+	BOOL ret_val = TRUE;
+	DWORD exit_code;
+	DWORD thread_out_val = SUCCESS_CODE;
+	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+	{
+		if (NULL != g_send_semapore[i])
+		{
+			ret_val = ret_val && CloseHandle(g_send_semapore[i]);
+		}
+		if (NULL != g_hads_mutex[i])
+		{
+			ret_val = ret_val && CloseHandle(g_hads_mutex[i]);
+		}
+		if (NULL != g_log_file_mutex[i])
+		{
+			ret_val = ret_val && CloseHandle(g_log_file_mutex[i]);
+		}
+	}
+	for (int i = 0; i < MAX_NUM_PLAYERS; i++)
+	{
+		if (NULL != g_wait_for_client_event[i])
+		{
+			ret_val = ret_val && CloseHandle(g_wait_for_client_event[i]);
+		}
+	}
+	if (!ret_val)
+	{
+		printf("Error when closing sync objects handles\n");
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+
+}
+
+int release_socket()
+{
+	int ret_val = SUCCESS_CODE;
+	ret_val += close_socket(g_main_socket);
+	ret_val += clean_server();
+	if (ret_val)
+		return ERROR_CODE;
+	return SUCCESS_CODE;
+
+}
+
+int close_socket(SOCKET socket_to_close)
+{
+	if (closesocket(socket_to_close) == SOCKET_ERROR)
+	{
+		printf("Failed to close MainSocket, error %ld. Ending program\n", WSAGetLastError());
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+}
+
+int clean_server()
+{
+	if (WSACleanup() == SOCKET_ERROR)
+	{
+		printf("WSA Cleanup failed:, error %ld. Ending program.\n", WSAGetLastError());
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+}
+
+int close_thread()
+{
+	BOOL ret_val = TRUE;
+	DWORD wait_res;
+	DWORD exit_code;
+	int clean_result = SUCCESS_CODE;
+	// close send threads
+	//check if close
+	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+	{
+		ret_val = GetExitCodeThread(g_send_thread_handles_arr[i], &exit_code);
+		if (STILL_ACTIVE == exit_code)
+		{
+				g_is_thread_active[i] = FALSE;
+			ret_val = ret_val && ReleaseSemaphore(
+				g_send_semapore[i],
+				1, 		/* Signal that exactly one cell was emptied */
+				&wait_res);
+			if (ret_val)
+			{
+				wait_res = WaitForSingleObject(g_send_thread_handles_arr[i], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+				if (WAIT_OBJECT_0 == wait_res)
+				{
+					ret_val = GetExitCodeThread(g_send_thread_handles_arr[i], &exit_code);
+				}
+			}
+		}
+		if (!ret_val || STILL_ACTIVE == exit_code)
+		{
+			clean_result = ERROR_CODE;
+			printf("Error when releasing\n");
+			TerminateThread(g_send_thread_handles_arr[i], ERROR_CODE);
+		}
+		if (ERROR_CODE == exit_code)
+		{
+			printf("one of the thread give error exit code\n");
+			clean_result = ERROR_CODE;
+		}
+		ret_val = CloseHandle(g_send_thread_handles_arr[i]);
+		if (!ret_val)
+		{
+			printf("Error when closing thread handle\n");
+			clean_result = ERROR_CODE;
+		}
+
+		//close rec threads
+		g_is_thread_active[i] = FALSE;
+		wait_res = WaitForSingleObject(g_recive_thread_handles_arr[i], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+		if (WAIT_OBJECT_0 == wait_res)
+		{
+			ret_val = GetExitCodeThread(g_recive_thread_handles_arr[i], &exit_code);
+		}
+		if (!ret_val || STILL_ACTIVE == exit_code)
+		{
+			clean_result = ERROR_CODE;
+			printf("Error when releasing\n");
+			TerminateThread(g_recive_thread_handles_arr[i], ERROR_CODE);
+		}
+		if (ERROR_CODE == exit_code)
+		{
+			printf("one of the thread give error exit code\n");
+			clean_result = ERROR_CODE;
+		}
+		ret_val = CloseHandle(g_recive_thread_handles_arr[i]);
+		if (!ret_val)
+		{
+			printf("Error when closing thread handle\n");
+			clean_result = ERROR_CODE;
+		}
+	}
+	//close socket_thread
+	g_server_on = FALSE;
+	wait_res = WaitForSingleObject(g_main_thread_handle, MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+	if (WAIT_OBJECT_0 == wait_res)
+	{
+		ret_val = GetExitCodeThread(g_main_thread_handle, &exit_code);
+	}
+	if (!ret_val || STILL_ACTIVE == exit_code)
+	{
+		clean_result = ERROR_CODE;
+		printf("Error when releasing\n");
+		TerminateThread(g_main_thread_handle, ERROR_CODE);
+	}
+	if (ERROR_CODE == exit_code)
+	{
+		printf("one of the thread give error exit code\n");
+		clean_result = ERROR_CODE;
+	}
+	ret_val = CloseHandle(g_main_thread_handle);
+	if (!ret_val)
+	{
+		printf("Error when closing thread handle\n");
+		clean_result = ERROR_CODE;
+	}
+}
+
+HANDLE g_recive_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
+HANDLE g_send_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };

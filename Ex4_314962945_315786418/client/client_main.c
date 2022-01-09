@@ -24,12 +24,18 @@ typedef struct message_cell_s {
 	int  wait_for_response;
 }message_cell_t;
 
-HANDLE g_wait_for_server_event;
-SOCKET g_main_socket;
+HANDLE g_wait_for_server_event =NULL;
+SOCKET g_main_socket =NULL;
+HANDLE g_socket_thread[NUM_THREADS_FOR_CLIENT] = { NULL };
+
 char* g_server_adress = NULL;
 int g_server_port = 0;
-BOOLEAN g_is_time_out_arr = FALSE;
+BOOLEAN g_is_time_out = FALSE;
 BOOLEAN g_is_game_end = FALSE;
+BOOLEAN g_is_thread_avilibale[NUM_THREADS_FOR_CLIENT] = { FALSE };
+BOOL g_start_graceful_shutdown = { FALSE };
+
+
 static HANDLE g_hads_mutex = NULL;
 message_cell_t* gp_recived_massge_hade =  NULL;
 message_cell_t* gp_massage_to_send_hade = NULL;
@@ -41,24 +47,30 @@ char g_log_file_name[MAX_USERNAME_LEN + LOG_FILE_NAME_BASE_LEN] = { 0 };
 char g_server_input_username[MAX_USERNAME_LEN] = { 0 };
 int g_other_player_num = 0;
 enum client_types { CLIENT_REQUEST, CLIENT_VERSUS, CLIENT_PLAYER_MOVE, CLIENT_DISCONNECT };
-enum server_types { SERVER_APPROVED, SERVER_DENIED, SERVER_MAIN_MENU, GAME_STARTED, TURN_SWITCH, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
+enum server_types { SERVER_APPROVED, SERVER_DENIED, SERVER_MAIN_MENU, GAME_STARTED, TURN_SWITCH, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT, ERROR_TYPE };
+enum release_stage { NOT_NEED, RELEASE_SYNC, RELEASE_SOCKET, RELEASE_THREADS, RELEASE_LINK_LIST, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
+
 char message_type[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT","SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 char client_meaasge[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
 char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","","GAME_VIEW","SERVER_OPPONENT_OUT" };
+int g_release_sorce_stage = 0;
+
 
 //function decleration
-void send_to_server(const char* Str, SOCKET m_socket);
 message_cell_t* add_message_to_cell_arr(char* p_message, int message_len, message_cell_t* p_cell_head, int wait_for_response);
-void MainClient();
-void sync_with_srver();
+int init_sync_objects();
 char* readLine();
 int user_choose_option();
 int create_log_file();
 int write_to_log(const char* p_start_message_str, char* p_buffer, const DWORD buffer_len);
 DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len);
 HANDLE create_file_simple(LPCSTR p_file_name, char mode);
-void client_response();
-
+int client_response();
+int connect_to_server();
+int close_sync_object();
+int init_threads();
+int send_first_request_to_server();
+int close_socket();
 int main(int argc, char* argv[])
 {
 	if (argc != NUM_OF_INPUTS + 1)
@@ -70,8 +82,12 @@ int main(int argc, char* argv[])
 	g_server_port = atoi(argv[SERVER_PORT_IND]);
 	strcpy(g_user_name, argv[USERNAME_IND]);
 	create_log_file();
-	sync_with_srver();
-	MainClient();
+	init_sync_objects();
+	connect_to_server();
+	init_threads();
+	client_response();
+	WaitForMultipleObjects(2, g_socket_thread, TRUE, INFINITE);
+
 	
 }
 
@@ -87,16 +103,30 @@ static DWORD RecvDataThread(void)
 		BOOL ret_val;
 		char* AcceptedStr = NULL;
 		RecvRes = ReceiveString(&AcceptedStr, g_main_socket, g_wait_for_server_event);
-
+		if (!g_is_thread_avilibale[REC_THREAD])
+			return SUCCESS_CODE;
 		if (RecvRes == TRNS_FAILED)
 		{
 			printf("Socket error while trying to write data to socket\n");
-			return 0x555;
+			if(NULL != AcceptedStr)
+				free(AcceptedStr);
+			return ERROR_CODE;
 		}
 		else if (RecvRes == TRNS_DISCONNECTED)
 		{
-			printf("Server closed connection. Bye!\n");
-			return 0x555;
+			if (!g_start_graceful_shutdown)
+			{
+				if (NULL != AcceptedStr)
+					free(AcceptedStr);
+				g_is_thread_avilibale[REC_THREAD] = FALSE;
+				//TODO send final transmssion
+				shutdown(g_main_socket, SD_SEND);//will stop sending info
+			}
+			if (close_socket(g_main_socket))
+				return ERROR_CODE;
+			//TODO do we need to print someting?
+			g_is_thread_avilibale[REC_THREAD] = FALSE;
+			return SUCCESS_CODE;
 		}
 		else
 		{
@@ -104,9 +134,13 @@ static DWORD RecvDataThread(void)
 			if (WAIT_OBJECT_0 != wait_code)
 			{
 				printf("Error when waiting for mutex\n");
+				if (NULL != AcceptedStr)
+					free(AcceptedStr);
 				return ERROR_CODE;
 			}
 			gp_recived_massge_hade = add_message_to_cell_arr(AcceptedStr, get_message_len(AcceptedStr), gp_recived_massge_hade, FALSE);
+			if (NULL != AcceptedStr)
+				free(AcceptedStr);
 			ret_val = ReleaseMutex(g_hads_mutex);
 			if (FALSE == ret_val)
 			{
@@ -127,7 +161,7 @@ static DWORD RecvDataThread(void)
 
 	}
 
-	return 0;
+	return SUCCESS_CODE;
 }
 
 //Sending data to the server
@@ -144,12 +178,17 @@ static DWORD SendDataThread(void)
 			printf("Error when waiting for semapore\n");
 			return ERROR_CODE;
 		}
-		//SendRes =
+		if (!g_is_thread_avilibale[SEND_THREAD])
+			return SUCCESS_CODE;
 		wait_code = WaitForSingleObject(g_hads_mutex, INFINITE);
 		if (WAIT_OBJECT_0 != wait_code)
 		{
 			printf("Error when waiting for mutex\n");
 			return ERROR_CODE;
+		}
+		if (NULL == gp_massage_to_send_hade)
+		{
+
 		}
 		char* p_massage_to_send = gp_massage_to_send_hade->p_message;
 		int wait_for_response = gp_massage_to_send_hade->wait_for_response;
@@ -173,13 +212,12 @@ static DWORD SendDataThread(void)
 		if (SendRes == TRNS_FAILED)
 		{
 			printf("Socket error while trying to write data to socket\n");
-			return 0x555;
+			return ERROR_CODE;
 		}
 		if (SendRes == TRNS_FAILED)
 		{
 			printf("Service socket error while writing, closing thread.\n");
-			closesocket(g_main_socket);
-			return 1;
+			return ERROR_CODE;
 		}
 		if (wait_for_response)
 		{
@@ -187,7 +225,7 @@ static DWORD SendDataThread(void)
 			//wait for the server respond
 			if (WAIT_TIMEOUT == wait_code)
 			{
-				g_is_time_out_arr = TRUE;
+				g_is_time_out = TRUE;
 				printf("server is not rsponding error while trying to write data to socket\n");
 				//TODO close graceful
 			}
@@ -195,11 +233,9 @@ static DWORD SendDataThread(void)
 	}
 }
 
-
-void MainClient()
+int connect_to_server()
 {
 	SOCKADDR_IN clientService;
-	HANDLE hThread[2];
 
 	// Initialize Winsock.
 	WSADATA wsaData; //Create a WSADATA object called wsaData.
@@ -220,15 +256,9 @@ void MainClient()
 	if (g_main_socket == INVALID_SOCKET) {
 		printf("Error at socket(): %ld\n", WSAGetLastError());
 		WSACleanup();
-		return;
+		return ERROR_CODE;
 	}
-	/*
-	 The parameters passed to the socket function can be changed for different implementations.
-	 Error detection is a key part of successful networking code.
-	 If the socket call fails, it returns INVALID_SOCKET.
-	 The if statement in the previous code is used to catch any errors that may have occurred while creating
-	 the socket. WSAGetLastError returns an error number associated with the last error that occurred.
-	 */
+
 
 
 	 //For a client to communicate on a network, it must connect to a server.
@@ -251,15 +281,20 @@ void MainClient()
 	{
 		if (connect(g_main_socket, (SOCKADDR*)&clientService, sizeof(clientService)) == SOCKET_ERROR)
 		{
-			int erorr_message_len = 4+ strlen(g_server_adress) + max(log10(g_server_port), 0)+1;//:+.\n+\0+
+			int erorr_message_len = 4 + strlen(g_server_adress) + max(log10(g_server_port), 0) + 1;//:+.\n+\0+
 			char* erorr_message = (char*)malloc(sizeof(char) * erorr_message_len);
+			if (NULL == erorr_message)
+			{
+				printf("unable to alocate memory for erorr_message\n");
+
+			}
 			sprintf_s(erorr_message, erorr_message_len, "%s:%d.\n", g_server_adress, g_server_port);
 			printf(erorr_message);
 			write_to_log("Failed connecting to server on ", erorr_message, strlen(erorr_message));
 			free(erorr_message);
 			printf("Choose what to do next:\n1. Try to reconnect\n2. Exit\n");
 			int user_input = user_choose_option();
-			if (1==user_input)
+			if (1 == user_input)
 			{
 				try_to_connect = TRUE;
 				//Try to reconnect
@@ -269,9 +304,9 @@ void MainClient()
 			{
 				//Exit
 				WSACleanup();
-				return;
+				return ERROR_CODE;
 			}
-			else if(BAD_ALOC ==  user_input)
+			else if (BAD_ALOC == user_input)
 			{
 				//TODO close resorce
 
@@ -285,10 +320,14 @@ void MainClient()
 		}
 
 	}
+	return SUCCESS_CODE;
 
+}
 
-
-	hThread[0] = CreateThread(
+int init_threads()
+{
+	g_is_thread_avilibale[REC_THREAD] = TRUE;
+	g_socket_thread[REC_THREAD] = CreateThread(
 		NULL,
 		0,
 		(LPTHREAD_START_ROUTINE)SendDataThread,
@@ -296,14 +335,13 @@ void MainClient()
 		0,
 		NULL
 	);
-	//TODO handel erorr
-	if (NULL == hThread[0])
+	if (NULL == g_socket_thread[REC_THREAD])
 	{
 		printf("Couldn't create thread\n");
-		//free_resource(pg_frame_queue_head, pg_thread_queue_head);
-		exit(ERROR_CODE);
+		return ERROR_CODE;
 	}
-	hThread[1] = CreateThread(
+	g_is_thread_avilibale[SEND_THREAD] = TRUE;
+	g_socket_thread[SEND_THREAD] = CreateThread(
 		NULL,
 		0,
 		(LPTHREAD_START_ROUTINE)RecvDataThread,
@@ -312,56 +350,22 @@ void MainClient()
 		NULL
 	);
 	//TODO handel erorr
-	if (NULL == hThread[1])
+	if (NULL == g_socket_thread[SEND_THREAD])
 	{
 		printf("Couldn't create thread\n");
-		//free_resource(pg_frame_queue_head, pg_thread_queue_head);
-		exit(ERROR_CODE);
+		return ERROR_CODE;
 	}
+	return SUCCESS_CODE;
+}
+
+int send_first_request_to_server()
+{
 	//send client request
-	char message[MASSGAE_TYPE_MAX_LEN+ MAX_USERNAME_LEN+2] = { 0 };//message type + user_name + \n + :
+	char message[MASSGAE_TYPE_MAX_LEN + MAX_USERNAME_LEN + 2] = { 0 };//message type + user_name + \n + :
 	sprintf_s(message, MASSGAE_TYPE_MAX_LEN + MAX_USERNAME_LEN + 2, "%s%c%s%c", client_meaasge[CLIENT_REQUEST], MASSGAE_TYPE_SEPARATE, g_user_name, MASSGAE_END);
 	g_game_on = TRUE;
 	//send requset to server
 	send_message_to_server(message, get_message_len(message), 2 * MAX_TIME_FOR_TIMEOUT);
-	client_response();
-
-	WaitForMultipleObjects(2, hThread, TRUE, INFINITE);
-
-	TerminateThread(hThread[0], 0x555);
-	TerminateThread(hThread[1], 0x555);
-
-	CloseHandle(hThread[0]);
-	CloseHandle(hThread[1]);
-
-	closesocket(g_main_socket);
-
-	WSACleanup();
-
-	return;
-}
-
-void send_to_server(const char* Str, SOCKET m_socket)
-{
-	DWORD wait_res;
-	TransferResult_t SendRes;
-	//reset_server_event
-	wait_res = WaitForSingleObject(g_wait_for_server_event, 0);
-	SendRes = SendString(Str, m_socket);
-	if (SendRes == TRNS_FAILED)
-	{
-		printf("Socket error while trying to write data to socket\n");
-		return 0x555;
-	}
-	//TODO if CLIENT_VERSUS wait duble time
-	wait_res = WaitForSingleObject(g_wait_for_server_event, MAX_TIME_FOR_TIMEOUT*1000);//*1000 for secends
-	//wait for the server respond
-	if (WAIT_TIMEOUT == wait_res)
-	{
-		g_is_time_out_arr = TRUE;
-		printf("server is not rsponding error while trying to write data to socket\n");
-		//TODO close graceful
-	}
 }
 
 
@@ -393,7 +397,7 @@ void wait_for_server()
 	return wait_for_server_event;
 }
 
-void sync_with_srver()
+int init_sync_objects()
 {
 	//create semapore
 	g_send_semapore = CreateSemaphore(
@@ -404,6 +408,7 @@ void sync_with_srver()
 	if (NULL == g_send_semapore)
 	{
 		printf("error when Create Semaphore\n");
+		return ERROR_CODE;
 	}
 
 	g_rcev_semapore = CreateSemaphore(
@@ -414,6 +419,8 @@ void sync_with_srver()
 	if (NULL == g_send_semapore)
 	{
 		printf("error when Create Semaphore\n");
+		return ERROR_CODE;
+
 	}
 
 	g_hads_mutex = CreateMutex(
@@ -443,73 +450,10 @@ void sync_with_srver()
 	last_error = GetLastError();
 	if (ERROR_SUCCESS != last_error)
 	{
+		return ERROR_CODE;
 		//TODO add error handel
 	}
-}
-
-void client_interface(int stage)
-{
-	char SendStr[256];
-	printf("Choose what to do next:\n1. Play against another client\n2. Quit");
-	gets_s(SendStr, sizeof(SendStr)); //Reading a string from the keyboard
-
-	if (STRINGS_ARE_EQUAL(SendStr, "quit"))
-		return 0x555; //"quit" signals an exit from the client side
-	switch (stage)
-	{
-	case 2:
-		printf("Server on <ip>:<port> denied the connection request\nChoose what to do next:\n1. Try to reconnect\n2. Exit\n");
-		break;
-	case 3:
-		printf("Choose what to do next:\n1. Play against another client\n2. Quit\n");
-		break;
-	case 4:
-		printf("Game is on!\n");
-		break;
-	case 5:
-		if (STRINGS_ARE_EQUAL(g_server_input_username, g_user_name))
-		{
-			printf("Your turn!\n");
-		}
-		else
-		{
-			printf("%s's turn!\n", g_server_input_username);
-		}		
-		break;
-	case 6:
-		printf("Enter the next number or boom:\n");
-		break;
-	case 7:
-		printf("%s won!\n", g_server_input_username);
-		break;
-	case 8:
-		//TODO wait 30 sec and then main manue
-		break;
-	case 9:
-		;
-		char is_end_msg[END_MSG_MAX_LEN] = CONTINUE_GAME;
-		if (g_is_game_end)
-			strcpy(is_end_msg, END_GAME);
-		if (BOOM_VLUE == g_other_player_num)
-		{
-			printf("%s move was %s %s\n", g_server_input_username,BOOM_TEXT, is_end_msg);
-		}
-		else
-		{
-			printf("%s move was %d %s\n", g_server_input_username, g_other_player_num, is_end_msg);
-		}
-		break;
-	case 10:
-		printf("Opponent quit .\n");
-		break;
-	}
-	
-	
-	printf("Error:Illegal command\n");
-
-
-
-
+	return SUCCESS_CODE;
 
 }
 
@@ -525,6 +469,7 @@ char* readLine()
 	if (NULL == (buffer = (char*)malloc(capacity)))
 	{
 		//TODO handle erorr
+		printf("unable to alocate memory for read user input\n");
 		return NULL;
 	}
 
@@ -546,40 +491,6 @@ char* readLine()
 	}
 	buffer[index] = '\0';
 	return buffer;
-}
-
-void get_user_command(char* p_command)
-{
-	/// <summary>
-	/// the code will get the input of the player and will send it to the game
-	/// </summary>
-	BOOL break_status = FALSE;
-	while (break_status == 0)
-	{
-		printf("Enter the next number or boom:");
-		p_command = readLine();
-		int alphabet = 0, i;
-		for (i = 0; p_command[i] != '\0'; i++)
-		{
-
-			// check for alphabets
-			if (isalpha(p_command) != 0)
-				alphabet++;
-		}
-		if (p_command == NULL)
-		{
-			printf("memory alloction fail.\n");
-			return ERROR_CODE;
-		}
-		break_status = TRUE;
-		if (((atoi(p_command) == 0) || alphabet != 0) && (strcmp(p_command, "boom") != 0))
-		{
-			printf("Error:Illegal command\n");
-			break_status = FALSE;
-		}
-	}
-
-	return 0;
 }
 
 int read_massage_from_server(char* Str)
@@ -606,6 +517,8 @@ int read_massage_from_server(char* Str)
 	if (NUM_SERVER_TYPES == type)
 	{
 		//TODO not good massge
+		printf("get message from server in unknown format\n");
+		return ERROR_TYPE;
 	}
 	while (Str[index]!= MASSGAE_END)
 	{
@@ -675,7 +588,7 @@ int read_massage_from_server(char* Str)
 }
 
 
-void client_response()
+int client_response()
 {
 	DWORD wait_code;
 	BOOL ret_val;
@@ -715,7 +628,7 @@ void client_response()
 		}
 		else if (SERVER_DENIED == message_type)
 		{
-			printf("Server on <ip>:<port> denied the connection request\nChoose what to do next:\n1. Try to reconnect\n2. Exit\n");
+			printf("Server on %s:%d denied the connection request\nChoose what to do next:\n1. Try to reconnect\n2. Exit\n", g_server_adress, g_server_port);
 			int user_input = user_choose_option();
 			if (1 == user_input)
 			{
@@ -723,6 +636,7 @@ void client_response()
 			}
 			else if (2 == user_input)
 			{
+
 			}
 
 		}
@@ -767,6 +681,7 @@ void client_response()
 			if (NULL == message)
 			{
 				//TODO add erorr
+				printf("unable to alocate memory for message\n");
 				return ERROR_CODE;
 
 			}
@@ -798,6 +713,10 @@ void client_response()
 		else if (SERVER_OPPONENT_OUT == message_type)
 		{
 			printf("Opponent quit .\n");
+		}
+		else if(ERROR_TYPE == message_type)
+		{
+
 		}
 		else
 		{
@@ -889,11 +808,6 @@ message_cell_t* add_message_to_cell_arr(char* p_message,int message_len ,message
 	}
 }
 
-
-//		gets_s(SendStr, sizeof(SendStr)); //Reading a string from the keyboard
-//		if (STRINGS_ARE_EQUAL(SendStr, "quit"))
-//return 0x555; //"quit" signals an exit from the client side
-
 int user_choose_option()
 {
 	char* p_user_input = NULL;
@@ -902,7 +816,7 @@ int user_choose_option()
 		p_user_input = readLine();
 		if (NULL == p_user_input)
 		{
-			//unable to alocate memory for user input
+			printf("unable to alocate memory for user input\n");
 			return BAD_ALOC;
 		}
 		if (STRINGS_ARE_EQUAL(p_user_input, "1"))
@@ -919,6 +833,7 @@ int user_choose_option()
 		{
 			free(p_user_input);
 			printf("Error:Illegal command\n");
+			write_to_log("Error:Illegal command", "\n", 1);
 		}
 
 	}
@@ -1040,4 +955,166 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 		printf("did not find file %s\n", p_file_name);
 	}
 	return h_file;
+}
+
+
+//{ NOT_NEED, RELEASE_SYNC, RELEASE_SOCKET,RELEASE_THREADS
+int release_source(int stage)
+{
+	int release_result = SUCCESS_CODE;
+	switch (stage)
+	{
+	case RELEASE_LINK_LIST:
+		release_result += relase_link_list();
+	case RELEASE_THREADS:
+		release_result += close_thread();
+	case RELEASE_SOCKET:
+		release_result += close_socket();
+	case RELEASE_SYNC:
+		release_result += close_sync_object();
+	case NOT_NEED:
+		break;
+	}
+	if (SUCCESS_CODE == release_result)
+		return SUCCESS_CODE;
+	return ERROR_CODE;
+}
+
+int close_sync_object()
+{
+	/// <summary>
+	/// this code will close all the handles and threads we used
+	/// </summary>
+	/// <returns></returns>
+	BOOL ret_val = TRUE;
+	DWORD exit_code;
+	DWORD thread_out_val = SUCCESS_CODE;
+	if (NULL != g_send_semapore)
+	{
+		ret_val = ret_val && CloseHandle(g_send_semapore);
+	}
+	if (NULL != g_rcev_semapore)
+	{
+		ret_val = ret_val && CloseHandle(g_rcev_semapore);
+	}
+	if (NULL != g_hads_mutex)
+	{
+		ret_val = ret_val && CloseHandle(g_hads_mutex);
+	}
+	if (NULL != g_wait_for_server_event)
+	{
+		ret_val = ret_val && CloseHandle(g_wait_for_server_event);
+	}
+	if (ERROR_RET == ret_val)
+	{
+		printf("Error when closing sync objects handles\n");
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+
+}
+
+int close_thread()
+{
+	BOOL ret_val = TRUE;
+	DWORD wait_res;
+	DWORD exit_code;
+	int clean_result = SUCCESS_CODE;
+	// close send threads
+	//check if close
+	ret_val = GetExitCodeThread(g_socket_thread[SEND_THREAD], &exit_code);
+	if (STILL_ACTIVE == exit_code)
+	{
+		g_is_thread_avilibale[SEND_THREAD] = FALSE;
+		ret_val = ret_val && ReleaseSemaphore(
+			g_send_semapore,
+			1, 		/* Signal that exactly one cell was emptied */
+			&wait_res);
+		if (ret_val)
+		{
+			ret_val = GetExitCodeThread(g_socket_thread[SEND_THREAD], &exit_code);
+		}
+	}
+	if (ERROR_RET == ret_val || STILL_ACTIVE == exit_code)
+	{
+		clean_result = ERROR_CODE;
+		printf("Error when releasing\n");
+		TerminateThread(g_socket_thread[SEND_THREAD], ERROR_CODE);
+	}
+	if (ERROR_CODE == exit_code)
+	{
+		printf("one of the thread give error exit code\n");
+		clean_result = ERROR_CODE;
+	}
+	ret_val = CloseHandle(g_socket_thread[SEND_THREAD]);
+	if (!ret_val)
+	{
+		printf("Error when closing thread handle\n");
+		clean_result = ERROR_CODE;
+	}
+
+	// close rec threads
+	ret_val = GetExitCodeThread(g_socket_thread[REC_THREAD], &exit_code);
+	if (ERROR_RET == ret_val || STILL_ACTIVE == exit_code)
+	{
+		clean_result = ERROR_CODE;
+		printf("Error when releasing\n");
+		TerminateThread(g_socket_thread[REC_THREAD], ERROR_CODE);
+	}
+	if (ERROR_CODE == exit_code)
+	{
+		printf("one of the thread give error exit code\n");
+		clean_result = ERROR_CODE;
+	}
+	//TODO add to recive thread option to close
+	return clean_result;
+}
+
+int close_socket()
+{
+	int ret_val = SUCCESS_CODE;
+	if (SOCKET_ERROR == closesocket(g_main_socket))
+	{
+		printf("Failed to close MainSocket, error %ld. Ending program\n", WSAGetLastError());
+		ret_val = ERROR_CODE;
+	}
+	if (SOCKET_ERROR == WSACleanup())
+	{
+		printf("Failed to close Winsocket, error %ld. Ending program.\n", WSAGetLastError());
+		ret_val = ERROR_CODE;
+	}
+	return ret_val;
+}
+
+int relase_link_list()
+{
+	DWORD wait_code;
+	wait_code = WaitForSingleObject(g_hads_mutex, INFINITE);
+	if (WAIT_OBJECT_0 != wait_code)
+	{
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	message_cell_t* p_temp_cell;
+	while (NULL != gp_recived_massge_hade)
+	{
+		p_temp_cell = gp_recived_massge_hade;
+		gp_recived_massge_hade = gp_recived_massge_hade->p_next;
+		free(p_temp_cell->p_message);
+		free(p_temp_cell);
+	}
+	while (NULL != gp_massage_to_send_hade)
+	{
+		p_temp_cell = gp_massage_to_send_hade;
+		gp_massage_to_send_hade = gp_massage_to_send_hade->p_next;
+		free(p_temp_cell->p_message);
+		free(p_temp_cell);
+	}
+	if (FALSE == ReleaseMutex(g_hads_mutex))
+	{
+		printf("unable to release mutex\n");
+		return ERROR_CODE;
+	}
+	return SUCCESS_CODE;
+
 }

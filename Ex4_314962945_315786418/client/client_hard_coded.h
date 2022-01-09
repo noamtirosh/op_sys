@@ -11,6 +11,10 @@
 #define LOG_FILE_NAME_BASE_LEN 16
 #define LOG_REC "received from server-"
 #define LOG_SENT "sent to server-"
+#define ERROR_RET 0
+#define NUM_THREADS_FOR_CLIENT 2
+#define REC_THREAD 0
+#define SEND_THREAD 1
 
 #endif // !CLIENT_HARD_CODE_H
 

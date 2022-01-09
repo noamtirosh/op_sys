@@ -81,7 +81,6 @@ TransferResult_t ReceiveBuffer( char* OutputBuffer, int BytesToReceive, SOCKET s
 		{
 			BOOL is_success;
 			is_success = SetEvent(wait_event);
-			wait_event = NULL;
 			//TODO check if set
 		}
 		if ( BytesJustTransferred == SOCKET_ERROR ) 
