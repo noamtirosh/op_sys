@@ -60,14 +60,15 @@ HANDLE g_send_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
 thread_input_t g_thread_inputs_arr[MAX_NUM_CLIENTS];
 BOOL g_is_thread_active[MAX_NUM_CLIENTS] = { FALSE };
 BOOL g_player_vs_req[MAX_NUM_PLAYERS] = { FALSE };
-
 BOOL g_start_graceful_shutdown[MAX_NUM_CLIENTS] = { FALSE };
+SOCKET g_main_socket = INVALID_SOCKET;
+SOCKET g_client_socket[MAX_NUM_CLIENTS] = { INVALID_SOCKET };
+
 
 char client_meaasge[NUM_CLIENT_TYPES][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
 char server_massage[NUM_SERVER_TYPES][MASSGAE_TYPE_MAX_LEN] = { "SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 
-SOCKET g_main_socket = INVALID_SOCKET;
-SOCKET g_client_socket[MAX_NUM_CLIENTS] = { INVALID_SOCKET };
+
 
 
 
@@ -89,6 +90,7 @@ int write_to_log(int client_num, const char* p_start_message_str, char* p_buffer
 int create_log_file(int client_num);
 int close_sync_object();
 int relase_link_list();
+int close_socket_thread();
 
 
 
@@ -105,7 +107,23 @@ int main(int argc, char* argv[])
 	init_socket_thread();
 	while (TRUE)
 	{
+		DWORD multi_wait_code;
+		multi_wait_code = WaitForMultipleObjects(MAX_NUM_CLIENTS, g_game_end_semapore_arr, FALSE, INFINITE);
+		if (WAIT_FAILED == multi_wait_code)
+		{
+			printf("Error when waitting for multiple threads \n");
+			//TODO release
+			return ERROR_CODE;
+		}
+		else
+		{
+			DWORD exit_code;
+			//if(!GetExitCodeThread(handle_arr[multi_wait_code], &exit_code))
+			//{
+			//	printf("Error when getting thread %d exit code\n", handle_arr[multi_wait_code]);
 
+			//}
+		}
 	}
 
 }
@@ -213,18 +231,12 @@ static DWORD WINAPI recive_from_client_thread(int *t_socket)
 			if (NULL != AcceptedStr)
 				free(AcceptedStr);
 			int response_type = server_send_response(massage_type, client_num);
-			if(CLIENT_DISCONNECT == massage_type)
-			{
-				// close tread 
-				//TODO close threads 
-				g_is_thread_active[client_num] = FALSE;
 
-			}
 		}
 
 	}
 
-	return 0;
+	return SUCCESS_CODE;
 }
 
 //Sending data to the server
@@ -429,11 +441,12 @@ int server_send_response(int type,int client_ind)
 			g_player_vs_req[client_ind] = TRUE;
 			//TODO wait for another player
 			//both players ask to play
-			if(g_is_thread_active[other_player_ind] && !g_player_vs_req[other_player_ind])
+			if(!g_player_vs_req[other_player_ind])
 			{
+				wait_res = WaitForSingleObject(g_wait_for_client_event[client_ind], 0);//*1000 for secends
 				wait_res = WaitForSingleObject(g_wait_for_client_event[client_ind], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 			}
-			else if (g_player_vs_req[other_player_ind])
+			else
 			{
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
 				//send both client GAME_STARTED	
@@ -455,6 +468,7 @@ int server_send_response(int type,int client_ind)
 				g_player_vs_req[client_ind] = FALSE;
 				message_len = MASSGAE_TYPE_MAX_LEN + 1;//for add \n
 				send_message_to_client(message_len, client_ind, SERVER_NO_OPPONENTS, NULL, FALSE);
+				send_message_to_client(message_len, client_ind, SERVER_MAIN_MENU, NULL, FALSE);
 				return SERVER_NO_OPPONENTS;
 			}
 
@@ -489,6 +503,7 @@ int server_send_response(int type,int client_ind)
 				sprintf_s(winner_name, MAX_USERNAME_LEN, "%s%c", g_client_name_arr[other_player_ind], MASSGAE_END);
 				send_message_to_client(message_len, client_ind, GAME_ENDED, winner_name, FALSE);
 				send_message_to_client(message_len, other_player_ind, GAME_ENDED, winner_name, FALSE);
+				reset_game();
 				send_message_to_client(message_len, client_ind, SERVER_MAIN_MENU, NULL, FALSE);
 				send_message_to_client(message_len, other_player_ind, SERVER_MAIN_MENU, NULL, FALSE);
 			}
@@ -504,11 +519,17 @@ int server_send_response(int type,int client_ind)
 
 			}
 		}
+		else if (CLIENT_DISCONNECT == type)
+		{
+			//when the client use CLIENT_DISCONNECT it should use graceful_shutdown 	 
+			//send_message_to_client(message_len, client_ind, SERVER_OPPONENT_OUT, NULL, FALSE);
+			//g_game_end_semapore_arr
+			return CLIENT_DISCONNECT;
+		}
 		else if (SERVER_NO_OPPONENTS == type)
 		{
 
 		}
-
 
 }
 
@@ -522,12 +543,24 @@ int init_sync_obj()
 			0,		/* Initial Count - */
 			MAX_MESSAGES_IN_BUF,		/* Maximum Count */
 			NULL); /* un-named */
-		if (NULL == g_send_semapore)
+		if (NULL == g_send_semapore[i])
 		{
 			printf("error when Create Semaphore\n");
 			return ERROR_CODE;
 
 		}
+		g_game_end_semapore_arr[i] = CreateSemaphore(
+			NULL,	/* Default security attributes */
+			0,		/* Initial Count - */
+			1,		/* Maximum Count */
+			NULL); /* un-named */
+		if (NULL == g_game_end_semapore_arr[i])
+		{
+			printf("error when Create Semaphore\n");
+			return ERROR_CODE;
+
+		}
+		//create mutex
 		g_hads_mutex[i] = CreateMutex(
 			NULL,	/* default security attributes */
 			FALSE,	/* initially not owned */
@@ -749,10 +782,6 @@ void logic_fun()
 
 }
 
-void reset_game()
-{
-
-}
 
 void remove_client(int client_id)
 {
@@ -1098,13 +1127,22 @@ HANDLE create_file_simple(LPCSTR p_file_name, char mode)
 
 int release_source(int stage)
 {
+
 	int release_result = SUCCESS_CODE;
+
 	switch (stage)
 	{
 	case RELEASE_LINK_LIST:
-		release_result += relase_link_list();
+		for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+		{
+			release_result += relase_link_list(i);
+		}
 	case RELEASE_THREADS:
-		release_result += close_thread();
+		for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+		{
+			release_result += close_client_threads(i);
+		}
+		release_result += close_socket_thread();
 	case RELEASE_SYNC:
 		release_result += close_sync_object();
 	case RELEASE_SOCKET:
@@ -1131,6 +1169,10 @@ int close_sync_object()
 		if (NULL != g_send_semapore[i])
 		{
 			ret_val = ret_val && CloseHandle(g_send_semapore[i]);
+		}
+		if (NULL != g_game_end_semapore_arr[i])
+		{
+			ret_val = ret_val && CloseHandle(g_game_end_semapore_arr[i]);
 		}
 		if (NULL != g_hads_mutex[i])
 		{
@@ -1188,43 +1230,40 @@ int clean_server()
 	return SUCCESS_CODE;
 }
 
-int relase_link_list()
+int relase_link_list(int client_num)
 {
 	DWORD wait_code;
-	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+	wait_code = WaitForSingleObject(g_hads_mutex[client_num], INFINITE);
+	if (WAIT_OBJECT_0 != wait_code)
 	{
-		wait_code = WaitForSingleObject(g_hads_mutex[i], INFINITE);
-		if (WAIT_OBJECT_0 != wait_code)
-		{
-			printf("Error when waiting for mutex\n");
-			return ERROR_CODE;
-		}
-		message_cell_t* p_temp_cell;
-		while (NULL != gp_recived_massge_hade[i])
-		{
-			p_temp_cell = gp_recived_massge_hade[i];
-			gp_recived_massge_hade[i] = gp_recived_massge_hade[i]->p_next;
-			free(p_temp_cell->p_message);
-			free(p_temp_cell);
-		}
-		while (NULL != gp_massage_to_send_hade[i])
-		{
-			p_temp_cell = gp_massage_to_send_hade[i];
-			gp_massage_to_send_hade[i] = gp_massage_to_send_hade[i]->p_next;
-			free(p_temp_cell->p_message);
-			free(p_temp_cell);
-		}
-		if (FALSE == ReleaseMutex(g_hads_mutex[i]))
-		{
-			printf("unable to release mutex\n");
-			return ERROR_CODE;
-		}
+		printf("Error when waiting for mutex\n");
+		return ERROR_CODE;
+	}
+	message_cell_t* p_temp_cell;
+	while (NULL != gp_recived_massge_hade[client_num])
+	{
+		p_temp_cell = gp_recived_massge_hade[client_num];
+		gp_recived_massge_hade[client_num] = gp_recived_massge_hade[client_num]->p_next;
+		free(p_temp_cell->p_message);
+		free(p_temp_cell);
+	}
+	while (NULL != gp_massage_to_send_hade[client_num])
+	{
+		p_temp_cell = gp_massage_to_send_hade[client_num];
+		gp_massage_to_send_hade[client_num] = gp_massage_to_send_hade[client_num]->p_next;
+		free(p_temp_cell->p_message);
+		free(p_temp_cell);
+	}
+	if (FALSE == ReleaseMutex(g_hads_mutex[client_num]))
+	{
+		printf("unable to release mutex\n");
+		return ERROR_CODE;
 	}
 	return SUCCESS_CODE;
 
 }
 
-int close_thread()
+int close_client_threads(int client_num)
 {
 	BOOL ret_val = TRUE;
 	DWORD wait_res;
@@ -1232,68 +1271,72 @@ int close_thread()
 	int clean_result = SUCCESS_CODE;
 	// close send threads
 	//check if close
-	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+	ret_val = GetExitCodeThread(g_send_thread_handles_arr[client_num], &exit_code);
+	if (STILL_ACTIVE == exit_code)
 	{
-		ret_val = GetExitCodeThread(g_send_thread_handles_arr[i], &exit_code);
-		if (STILL_ACTIVE == exit_code)
+			g_is_thread_active[client_num] = FALSE;
+		ret_val = ret_val && ReleaseSemaphore(
+			g_send_semapore[client_num],
+			1, 		/* Signal that exactly one cell was emptied */
+			&wait_res);
+		if (ret_val)
 		{
-				g_is_thread_active[i] = FALSE;
-			ret_val = ret_val && ReleaseSemaphore(
-				g_send_semapore[i],
-				1, 		/* Signal that exactly one cell was emptied */
-				&wait_res);
-			if (ret_val)
+			wait_res = WaitForSingleObject(g_send_thread_handles_arr[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+			if (WAIT_OBJECT_0 == wait_res)
 			{
-				wait_res = WaitForSingleObject(g_send_thread_handles_arr[i], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
-				if (WAIT_OBJECT_0 == wait_res)
-				{
-					ret_val = GetExitCodeThread(g_send_thread_handles_arr[i], &exit_code);
-				}
+				ret_val = GetExitCodeThread(g_send_thread_handles_arr[client_num], &exit_code);
 			}
 		}
-		if (!ret_val || STILL_ACTIVE == exit_code)
-		{
-			clean_result = ERROR_CODE;
-			printf("Error when releasing\n");
-			TerminateThread(g_send_thread_handles_arr[i], ERROR_CODE);
-		}
-		if (ERROR_CODE == exit_code)
-		{
-			printf("one of the thread give error exit code\n");
-			clean_result = ERROR_CODE;
-		}
-		ret_val = CloseHandle(g_send_thread_handles_arr[i]);
-		if (!ret_val)
-		{
-			printf("Error when closing thread handle\n");
-			clean_result = ERROR_CODE;
-		}
-
-		//close rec threads
-		g_is_thread_active[i] = FALSE;
-		wait_res = WaitForSingleObject(g_recive_thread_handles_arr[i], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
-		if (WAIT_OBJECT_0 == wait_res)
-		{
-			ret_val = GetExitCodeThread(g_recive_thread_handles_arr[i], &exit_code);
-		}
-		if (!ret_val || STILL_ACTIVE == exit_code)
-		{
-			clean_result = ERROR_CODE;
-			printf("Error when releasing\n");
-			TerminateThread(g_recive_thread_handles_arr[i], ERROR_CODE);
-		}
-		if (ERROR_CODE == exit_code)
-		{
-			printf("one of the thread give error exit code\n");
-			clean_result = ERROR_CODE;
-		}
-		ret_val = CloseHandle(g_recive_thread_handles_arr[i]);
-		if (!ret_val)
-		{
-			printf("Error when closing thread handle\n");
-			clean_result = ERROR_CODE;
-		}
 	}
+	if (!ret_val || STILL_ACTIVE == exit_code)
+	{
+		clean_result = ERROR_CODE;
+		printf("Error when releasing\n");
+		TerminateThread(g_send_thread_handles_arr[client_num], ERROR_CODE);
+	}
+	if (ERROR_CODE == exit_code)
+	{
+		printf("one of the thread give error exit code\n");
+		clean_result = ERROR_CODE;
+	}
+	ret_val = CloseHandle(g_send_thread_handles_arr[client_num]);
+	if (!ret_val)
+	{
+		printf("Error when closing thread handle\n");
+		clean_result = ERROR_CODE;
+	}
+
+	//close rec threads
+	g_is_thread_active[client_num] = FALSE;
+	wait_res = WaitForSingleObject(g_recive_thread_handles_arr[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+	if (WAIT_OBJECT_0 == wait_res)
+	{
+		ret_val = GetExitCodeThread(g_recive_thread_handles_arr[client_num], &exit_code);
+	}
+	if (!ret_val || STILL_ACTIVE == exit_code)
+	{
+		clean_result = ERROR_CODE;
+		printf("Error when releasing\n");
+		TerminateThread(g_recive_thread_handles_arr[client_num], ERROR_CODE);
+	}
+	if (ERROR_CODE == exit_code)
+	{
+		printf("one of the thread give error exit code\n");
+		clean_result = ERROR_CODE;
+	}
+	ret_val = CloseHandle(g_recive_thread_handles_arr[client_num]);
+	if (!ret_val)
+	{
+		printf("Error when closing thread handle\n");
+		clean_result = ERROR_CODE;
+	}
+	return clean_result;
+}
+int close_socket_thread()
+{
+	BOOL ret_val = TRUE;
+	DWORD wait_res;
+	DWORD exit_code = 0;
 	//close socket_thread
 	g_server_on = FALSE;
 	wait_res = WaitForSingleObject(g_main_thread_handle, MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
@@ -1303,20 +1346,74 @@ int close_thread()
 	}
 	if (!ret_val || STILL_ACTIVE == exit_code)
 	{
-		clean_result = ERROR_CODE;
 		printf("Error when releasing\n");
 		TerminateThread(g_main_thread_handle, ERROR_CODE);
+		return ERROR_CODE;
 	}
 	if (ERROR_CODE == exit_code)
 	{
-		printf("one of the thread give error exit code\n");
-		clean_result = ERROR_CODE;
+		printf("socket thread give error exit code\n");
+		return ERROR_CODE;
 	}
 	ret_val = CloseHandle(g_main_thread_handle);
 	if (!ret_val)
 	{
 		printf("Error when closing thread handle\n");
-		clean_result = ERROR_CODE;
+		return ERROR_CODE;
 	}
+	return SUCCESS_CODE;
+}
+
+int reset_client(int client_num)
+{
+	DWORD wait_code;
+	int reset_result = SUCCESS_CODE;
+	if (client_num >= MAX_NUM_CLIENTS)
+	{
+		return ERROR_CODE;
+	}
+	if (MAX_NUM_PLAYERS != client_num)
+	{
+		//reset game
+		reset_game();
+		//reset client_event
+		wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
+
+	}
+
+	//relase_link_list
+	reset_result += relase_link_list(client_num);
+	g_is_time_out[client_num] = FALSE;
+	//reset semapores
+	wait_code = WaitForSingleObject(g_send_semapore[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
+	while (WAIT_OBJECT_0 == wait_code)
+	{
+		wait_code = WaitForSingleObject(g_send_semapore[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
+	}
+	wait_code = WaitForSingleObject(g_game_end_semapore_arr[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
+	g_is_thread_active[client_num] = FALSE;
+	g_start_graceful_shutdown[client_num] = FALSE;
+	reset_result += close_client_threads(client_num);
+	// set thread handles to NULL, to mark that they have not been initialized
+	g_recive_thread_handles_arr[client_num] = NULL;
+	g_send_thread_handles_arr[client_num] = NULL;
+	//TODO its need to be after graceful_shutdown
+	close_socket(g_client_socket[client_num]);
+	g_client_socket[client_num] = INVALID_SOCKET;
+	if (reset_result)
+		return ERROR_CODE;
+	return SUCCESS_CODE;
+}
+
+int reset_game()
+{
+	g_game_turn_num = 0;
+	g_game_state = 0;
+	for (int i = 0; i < MAX_NUM_PLAYERS; i++)
+	{
+		g_player_num_arr[i] = 0;
+		g_player_vs_req[i] =  FALSE ;
+	}
+
 }
 
