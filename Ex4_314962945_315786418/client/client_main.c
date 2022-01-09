@@ -48,7 +48,7 @@ char g_server_input_username[MAX_USERNAME_LEN] = { 0 };
 int g_other_player_num = 0;
 enum client_types { CLIENT_REQUEST, CLIENT_VERSUS, CLIENT_PLAYER_MOVE, CLIENT_DISCONNECT };
 enum server_types { SERVER_APPROVED, SERVER_DENIED, SERVER_MAIN_MENU, GAME_STARTED, TURN_SWITCH, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT, ERROR_TYPE };
-enum release_stage { NOT_NEED, RELEASE_SYNC, RELEASE_SOCKET, RELEASE_THREADS, RELEASE_LINK_LIST, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
+enum release_stage { NOT_NEED, RELEASE_SYNC, RELEASE_SOCKET, RELEASE_THREADS, RELEASE_LINK_LIST};
 
 char message_type[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT","SERVER_APPROVED","SERVER_DENIED","SERVER_MAIN_MENU","GAME_STARTED","TURN_SWITCH","SERVER_MOVE_REQUEST","GAME_ENDED","SERVER_NO_OPPONENTS","GAME_VIEW","SERVER_OPPONENT_OUT" };
 char client_meaasge[][MASSGAE_TYPE_MAX_LEN] = { "CLIENT_REQUEST","CLIENT_VERSUS","CLIENT_PLAYER_MOVE","CLIENT_DISCONNECT" };
@@ -71,6 +71,8 @@ int close_sync_object();
 int init_threads();
 int send_first_request_to_server();
 int close_socket();
+int graceful_shutdown();
+
 int main(int argc, char* argv[])
 {
 	if (argc != NUM_OF_INPUTS + 1)
@@ -85,6 +87,7 @@ int main(int argc, char* argv[])
 	init_sync_objects();
 	connect_to_server();
 	init_threads();
+	send_first_request_to_server();
 	client_response();
 	WaitForMultipleObjects(2, g_socket_thread, TRUE, INFINITE);
 
@@ -125,7 +128,8 @@ static DWORD RecvDataThread(void)
 			if (close_socket(g_main_socket))
 				return ERROR_CODE;
 			//TODO do we need to print someting?
-			g_is_thread_avilibale[REC_THREAD] = FALSE;
+			//TODO do i need to close other thread now?
+			g_is_thread_avilibale[SEND_THREAD] = FALSE;
 			return SUCCESS_CODE;
 		}
 		else
@@ -186,9 +190,37 @@ static DWORD SendDataThread(void)
 			printf("Error when waiting for mutex\n");
 			return ERROR_CODE;
 		}
-		if (NULL == gp_massage_to_send_hade)
+		if (NULL == gp_massage_to_send_hade && g_start_graceful_shutdown)
 		{
-
+			//try graceful_shutdown 
+			shutdown(g_main_socket, SD_SEND);//will stop sending info
+			wait_code = WaitForSingleObject(g_socket_thread[REC_THREAD], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+			//wait for client  shutdown response
+			if (WAIT_OBJECT_0 != wait_code)
+			{
+				g_is_time_out = TRUE;
+				printf("client is not rsponding to graceful_shutdown\n");
+				return ERROR_CODE;
+			}
+			else
+			{
+				DWORD exit_code;
+				if (!GetExitCodeThread(g_socket_thread[REC_THREAD], &exit_code))
+				{
+					printf("problem when try to get exit code\n");
+					return ERROR_CODE;
+				}
+				if (SUCCESS_CODE == exit_code)
+				{
+					//TODO do we need to print someting?
+					return SUCCESS_CODE;
+				}
+				else
+				{
+					printf("rec thread didnt close socket\n");
+					return ERROR_CODE;
+				}
+			}
 		}
 		char* p_massage_to_send = gp_massage_to_send_hade->p_message;
 		int wait_for_response = gp_massage_to_send_hade->wait_for_response;
@@ -277,21 +309,23 @@ int connect_to_server()
 	// Call the connect function, passing the created socket and the sockaddr_in structure as parameters. 
 	// Check for general errors.
 	BOOL try_to_connect = TRUE;
+	//create ditels for log
+	int connect_params_len = 5+ strlen(g_server_adress) + max(log10(g_server_port), 0) + 1;//:+.\n+\0+
+	char* p_connect_params = (char*)malloc(sizeof(char) * connect_params_len);
+	if (NULL == p_connect_params)
+	{
+		printf("unable to alocate memory for erorr_message\n");
+		WSACleanup();
+		return ERROR_CODE;
+	}
+	sprintf_s(p_connect_params, connect_params_len, "%s:%d.\n", g_server_adress, g_server_port);
+	//try to connect to server
 	while (try_to_connect)
 	{
 		if (connect(g_main_socket, (SOCKADDR*)&clientService, sizeof(clientService)) == SOCKET_ERROR)
 		{
-			int erorr_message_len = 4 + strlen(g_server_adress) + max(log10(g_server_port), 0) + 1;//:+.\n+\0+
-			char* erorr_message = (char*)malloc(sizeof(char) * erorr_message_len);
-			if (NULL == erorr_message)
-			{
-				printf("unable to alocate memory for erorr_message\n");
-
-			}
-			sprintf_s(erorr_message, erorr_message_len, "%s:%d.\n", g_server_adress, g_server_port);
-			printf(erorr_message);
-			write_to_log("Failed connecting to server on ", erorr_message, strlen(erorr_message));
-			free(erorr_message);
+			printf("Failed connecting to server on %s", p_connect_params);
+			write_to_log("Failed connecting to server on ", p_connect_params, strlen(p_connect_params));
 			printf("Choose what to do next:\n1. Try to reconnect\n2. Exit\n");
 			int user_input = user_choose_option();
 			if (1 == user_input)
@@ -304,19 +338,24 @@ int connect_to_server()
 			{
 				//Exit
 				WSACleanup();
+				free(p_connect_params);
 				return ERROR_CODE;
 			}
 			else if (BAD_ALOC == user_input)
 			{
 				//TODO close resorce
-
+				free(p_connect_params);
 			}
 
 		}
 		else
 		{
 			try_to_connect = FALSE;
-			printf("Connected to server on %s:%d\n", g_server_adress, g_server_port);
+
+			printf("Connected to server on %s", p_connect_params);
+			write_to_log("Connected to server on ", p_connect_params, strlen(p_connect_params));
+			free(p_connect_params);
+
 		}
 
 	}
@@ -1116,5 +1155,45 @@ int relase_link_list()
 		return ERROR_CODE;
 	}
 	return SUCCESS_CODE;
+
+}
+
+int graceful_shutdown()
+{
+	//if return SUCCESS_CODE both threads are signaled and client socket is 
+	DWORD wait_res;
+	BOOL ret_val;
+	g_start_graceful_shutdown = TRUE;
+	ret_val = ReleaseSemaphore(
+		g_send_semapore,
+		1, 		/* Signal that exactly one cell was emptied */
+		&wait_res);
+	if (FALSE == ret_val)
+	{
+		printf("Error when releasing semapore\n");
+		return ERROR_CODE;
+	}
+	wait_res = WaitForSingleObject(g_socket_thread[SEND_THREAD], 2 * MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
+	if (WAIT_OBJECT_0 == wait_res)
+	{
+		DWORD exit_code;
+		if (!GetExitCodeThread(g_socket_thread[SEND_THREAD], &exit_code))
+		{
+			printf("problem when try to get exit code\n");
+			return ERROR_CODE;
+		}
+		if (SUCCESS_CODE == exit_code)
+		{
+			//TODO do we need to print someting?
+			return SUCCESS_CODE;
+		}
+	}
+	else
+	{
+		g_is_time_out = TRUE;
+		printf("client is not rsponding to graceful_shutdown\n");
+		return ERROR_CODE;
+
+	}
 
 }

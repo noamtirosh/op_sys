@@ -21,7 +21,7 @@ enum thread_mode { RECIVE, TRANSMIT};
 enum client_types{ CLIENT_REQUEST,CLIENT_VERSUS,CLIENT_PLAYER_MOVE,CLIENT_DISCONNECT};
 enum server_types{ SERVER_APPROVED,SERVER_DENIED,SERVER_MAIN_MENU,GAME_STARTED,TURN_SWITCH,SERVER_MOVE_REQUEST,GAME_ENDED,SERVER_NO_OPPONENTS,GAME_VIEW,SERVER_OPPONENT_OUT};
 enum game_state { NO_REQUEST_STATE, ONE_PLAYER_REQUST, TWO_PLAYER_REQUST, GAME_ON_STATE, GAME_END_STATE};
-enum release_stage { NOT_NEED, RELEASE_SOCKET, RELEASE_SYNC, RELEASE_THREADS, RELEASE_LINK_LIST, SERVER_MOVE_REQUEST, GAME_ENDED, SERVER_NO_OPPONENTS, GAME_VIEW, SERVER_OPPONENT_OUT };
+enum release_stage { NOT_NEED, RELEASE_SOCKET, RELEASE_SYNC, RELEASE_THREADS, RELEASE_LINK_LIST};
 
 typedef struct message_cell_s {
 	struct message_cell_s* p_next;
@@ -78,7 +78,7 @@ static DWORD WINAPI send_to_client_thread(int* t_socket);
 static DWORD WINAPI recive_from_client_thread(int* t_socket);
 static DWORD WINAPI socket_thread(void);
 static HANDLE CreateThreadSimple(LPTHREAD_START_ROUTINE p_start_routine,LPVOID p_thread_parameters);
-int graceful_shutdown(SOCKET s, int client_num);
+int graceful_shutdown(int client_num);
 message_cell_t* add_message_to_cell_arr(char* p_message, int message_len, message_cell_t* p_cell_head, BOOL wait_for_response);
 int init_sync_obj();
 int init_socket_thread();
@@ -88,6 +88,7 @@ DWORD write_to_file(LPCSTR p_file_name, LPVOID p_buffer, const DWORD buffer_len)
 int write_to_log(int client_num, const char* p_start_message_str, char* p_buffer, const DWORD buffer_len);
 int create_log_file(int client_num);
 int close_sync_object();
+int relase_link_list();
 
 
 
@@ -240,8 +241,6 @@ static DWORD WINAPI send_to_client_thread(int *t_socket)
 		if (g_start_graceful_shutdown[client_num])
 		{
 			//try graceful_shutdown 
-			//reset client_event
-			wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);
 			shutdown(client_socket, SD_SEND);//will stop sending info
 			wait_code = WaitForSingleObject(g_recive_thread_handles_arr[client_num], MAX_TIME_FOR_TIMEOUT * 1000);//*1000 for secends
 			//wait for client  shutdown response
@@ -263,6 +262,11 @@ static DWORD WINAPI send_to_client_thread(int *t_socket)
 				{
 					//TODO do we need to print someting?
 					return SUCCESS_CODE;
+				}
+				else
+				{
+					printf("rec thread didnt close socket\n");
+					return ERROR_CODE;
 				}
 			}
 		}
@@ -287,7 +291,7 @@ static DWORD WINAPI send_to_client_thread(int *t_socket)
 			{				
 				//reset client_event
 				wait_code = WaitForSingleObject(g_wait_for_client_event[client_num], 0);// dwmillisecends is 0 so if the g_wait_for_client_event is signaled it reset it 
-				if (WAIT_OBJECT_0 != wait_code)
+				if (WAIT_FAILED == wait_code)
 				{
 					printf("Error when waiting for client_event\n");
 					return ERROR_CODE;
@@ -754,7 +758,7 @@ void remove_client(int client_id)
 {
 
 }
-int graceful_shutdown(SOCKET s, int client_num)
+int graceful_shutdown( int client_num)
 {
 	//if return SUCCESS_CODE both threads are signaled and client socket is 
 	DWORD wait_res;
@@ -1184,6 +1188,42 @@ int clean_server()
 	return SUCCESS_CODE;
 }
 
+int relase_link_list()
+{
+	DWORD wait_code;
+	for (int i = 0; i < MAX_NUM_CLIENTS; i++)
+	{
+		wait_code = WaitForSingleObject(g_hads_mutex[i], INFINITE);
+		if (WAIT_OBJECT_0 != wait_code)
+		{
+			printf("Error when waiting for mutex\n");
+			return ERROR_CODE;
+		}
+		message_cell_t* p_temp_cell;
+		while (NULL != gp_recived_massge_hade[i])
+		{
+			p_temp_cell = gp_recived_massge_hade[i];
+			gp_recived_massge_hade[i] = gp_recived_massge_hade[i]->p_next;
+			free(p_temp_cell->p_message);
+			free(p_temp_cell);
+		}
+		while (NULL != gp_massage_to_send_hade[i])
+		{
+			p_temp_cell = gp_massage_to_send_hade[i];
+			gp_massage_to_send_hade[i] = gp_massage_to_send_hade[i]->p_next;
+			free(p_temp_cell->p_message);
+			free(p_temp_cell);
+		}
+		if (FALSE == ReleaseMutex(g_hads_mutex[i]))
+		{
+			printf("unable to release mutex\n");
+			return ERROR_CODE;
+		}
+	}
+	return SUCCESS_CODE;
+
+}
+
 int close_thread()
 {
 	BOOL ret_val = TRUE;
@@ -1280,5 +1320,3 @@ int close_thread()
 	}
 }
 
-HANDLE g_recive_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
-HANDLE g_send_thread_handles_arr[MAX_NUM_CLIENTS] = { NULL };
